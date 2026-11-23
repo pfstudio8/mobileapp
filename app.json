@@ -1,0 +1,36 @@
+{
+  "expo": {
+    "name": "Taskify",
+    "slug": "gestor-tareas-taller",
+    "scheme": "gestortareas",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "backgroundColor": "#FAF8FF",
+    "plugins": [
+      "expo-router"
+    ],
+    "android": {
+      "package": "com.instituto.gestortareastaller"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "web": {
+      "bundler": "metro"
+    },
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "5db04394-75c6-497f-9c62-257b4f1febdc"
+      }
+    }
+  }
+}
