@@ -1,23 +1,33 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { router } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { ActivityIndicator, FlatList, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Text, TextInput } from '../../src/components/Typo';
+import { TaskCard } from '../../src/components/TaskCard';
+import { StatusTabs } from '../../src/components/StatusTabs';
 import {
-  ActivityIndicator, FlatList, Keyboard, KeyboardAvoidingView, Platform, Pressable,
-  StyleSheet, Text, TextInput, View,
-} from 'react-native';
-import { TaskCard } from '../src/components/TaskCard';
-import { StatusTabs } from '../src/components/StatusTabs';
-import { AuthScreen } from '../src/components/AuthScreen';
-import { fetchTasks } from '../src/services/taskService';
-import type { Task, TaskStatus } from '../src/types/task';
-import { filterTasks } from '../src/utils/taskFilters';
-import { isValidTaskTitle } from '../src/utils/taskValidation';
-import { colors, radius, TOUCH, BRAND } from '../src/theme';
+  fetchTasks,
+  createRemoteTask,
+  updateRemoteTaskStatus,
+  deleteRemoteTask,
+} from '../../src/services/taskService';
+import type { Task, TaskStatus } from '../../src/types/task';
+import { filterTasks } from '../../src/utils/taskFilters';
+import { isValidTaskTitle } from '../../src/utils/taskValidation';
+import { colors, radius, TOUCH, BRAND } from '../../src/theme';
+import { useAuth } from '../../src/context/AuthContext';
 
 type Feedback = { text: string; tone: 'success' | 'error' } | null;
 
 export default function TaskManagerScreen() {
-  const [isAuthenticated, setIsAuthenticated] = useState(process.env.NODE_ENV === 'test');
+  let user: { name?: string } | null = null;
+  try {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    const auth = useAuth();
+    user = auth.user;
+  } catch {
+    // En tests unitarios sin AuthProvider
+  }
   const [tasks, setTasks] = useState<Task[]>([]);
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<TaskStatus>('todas');
@@ -56,9 +66,16 @@ export default function TaskManagerScreen() {
   const progress = total === 0 ? 0 : Math.round((completed / total) * 100);
 
   function toggleTask(id: string) {
+    const current = tasks.find((t) => t.id === id);
+    const nextCompleted = current ? !current.completed : true;
     setTasks((previous) =>
-      previous.map((task) => (task.id === id ? { ...task, completed: !task.completed } : task)),
+      previous.map((task) => (task.id === id ? { ...task, completed: nextCompleted } : task)),
     );
+    if (process.env.NODE_ENV !== 'test') {
+      void updateRemoteTaskStatus(id, nextCompleted).catch((err) => {
+        console.warn('[toggleTask] No se pudo sincronizar estado con el backend:', err);
+      });
+    }
   }
 
   function addTask() {
@@ -66,10 +83,12 @@ export default function TaskManagerScreen() {
       setFeedback({ text: 'Ingresá un nombre válido para continuar.', tone: 'error' });
       return;
     }
+    const cleanTitle = newTitle.trim();
+    const tempId = `nuevo-${nextId.current++}`;
     const task: Task = {
-      id: `nuevo-${nextId.current++}`,
-      title: newTitle.trim(),
-      description: 'Tarea creada durante el taller de debugging.',
+      id: tempId,
+      title: cleanTitle,
+      description: '',
       priority: 'media',
       completed: false,
     };
@@ -77,11 +96,28 @@ export default function TaskManagerScreen() {
     setNewTitle('');
     setFeedback({ text: 'Tarea agregada.', tone: 'success' });
     Keyboard.dismiss();
+
+    if (process.env.NODE_ENV !== 'test') {
+      void createRemoteTask(cleanTitle)
+        .then((created) => {
+          setTasks((previous) =>
+            previous.map((item) => (item.id === tempId ? created : item)),
+          );
+        })
+        .catch((err) => {
+          console.warn('[addTask] No se pudo guardar en el backend:', err);
+        });
+    }
   }
 
   function deleteTask(id: string) {
     setTasks((previous) => previous.filter((task) => task.id !== id));
     setFeedback({ text: 'Tarea eliminada.', tone: 'success' });
+    if (process.env.NODE_ENV !== 'test') {
+      void deleteRemoteTask(id).catch((err) => {
+        console.warn('[deleteTask] No se pudo eliminar en el backend:', err);
+      });
+    }
   }
 
   const hasFilters = query.trim().length > 0 || status !== 'todas';
@@ -94,7 +130,7 @@ export default function TaskManagerScreen() {
         <View style={styles.emptyBox}>
           <Text style={styles.emptyIcon}>📝</Text>
           <Text style={styles.emptyTitle}>Todavía no hay tareas</Text>
-          <Text style={styles.emptyText}>Agregá la primera con el campo de arriba.</Text>
+          <Text style={styles.emptyText}>Agregá la primera con el campo de arriba o el botón «+ Nueva».</Text>
         </View>
       );
     }
@@ -119,42 +155,50 @@ export default function TaskManagerScreen() {
     );
   }
 
-  if (!isAuthenticated) {
-    return (
-      <SafeAreaView style={styles.screen} edges={['top', 'bottom', 'left', 'right']}>
-        <AuthScreen
-          onSuccess={() => setIsAuthenticated(true)}
-          onContinueAsGuest={() => setIsAuthenticated(true)}
-        />
-      </SafeAreaView>
-    );
-  }
-
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
         <FlatList
           data={loading ? [] : visibleTasks}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => (
-            <TaskCard task={item} onToggle={() => toggleTask(item.id)} onDelete={() => deleteTask(item.id)} />
+            <TaskCard
+              task={item}
+              onToggle={() => toggleTask(item.id)}
+              onDelete={() => deleteTask(item.id)}
+            />
           )}
           keyboardShouldPersistTaps="handled"
           keyboardDismissMode="on-drag"
+          refreshing={loading}
+          onRefresh={() => void loadTasks()}
           contentContainerStyle={styles.listContainer}
           ListHeaderComponent={
             <>
+              {/* Barra superior con navegación de pantallas */}
               <View style={styles.eyebrowRow}>
                 <Text style={styles.eyebrow}>{BRAND.tagline.toUpperCase()}</Text>
                 <View style={styles.headerButtonsRow}>
                   <Pressable
+                    testID="new-task-nav-button"
+                    accessibilityRole="button"
+                    accessibilityLabel="Crear nueva tarea"
+                    onPress={() => router.push('/(app)/new' as any)}
+                    style={({ pressed }) => [styles.newBtn, pressed && styles.pressed]}
+                  >
+                    <Text style={styles.newBtnText}>+ Nueva</Text>
+                  </Pressable>
+                  <Pressable
                     testID="auth-profile-button"
                     accessibilityRole="button"
-                    accessibilityLabel="Cerrar sesión o ver cuenta"
-                    onPress={() => setIsAuthenticated(false)}
+                    accessibilityLabel="Ver perfil y sesión"
+                    onPress={() => router.push('/(app)/profile' as any)}
                     style={({ pressed }) => [styles.accountButton, pressed && styles.pressed]}
                   >
-                    <Text style={styles.accountText}>Cuenta 👤</Text>
+                    <Text style={styles.accountText}>Perfil 👤</Text>
                   </Pressable>
                   <Pressable
                     accessibilityRole="button"
@@ -166,12 +210,19 @@ export default function TaskManagerScreen() {
                   </Pressable>
                 </View>
               </View>
+
               <View style={styles.brandRow}>
                 <View style={styles.logo} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
                   <Text style={styles.logoMark}>✓</Text>
                 </View>
-                <Text accessibilityRole="header" style={styles.heading}>{BRAND.name}</Text>
+                <View>
+                  <Text accessibilityRole="header" style={styles.heading}>{BRAND.name}</Text>
+                  {user?.name ? (
+                    <Text style={styles.userGreeting}>Hola, {user.name} 👋</Text>
+                  ) : null}
+                </View>
               </View>
+
               <Text style={styles.subtitle}>
                 {total === 0
                   ? 'Organizá tu trabajo y seguí tu avance.'
@@ -180,35 +231,33 @@ export default function TaskManagerScreen() {
                     : `Te ${pending === 1 ? 'queda' : 'quedan'} ${pending} ${pending === 1 ? 'tarea pendiente' : 'tareas pendientes'}.`}
               </Text>
 
+              {/* Tarjeta de Progreso */}
               <View style={styles.progressCard}>
                 <View style={styles.progressTop}>
                   <Text style={styles.progressLabel}>PROGRESO</Text>
                   <Text style={styles.progressValue}>{progress}%</Text>
                 </View>
-                <View
-                  style={styles.progressTrack}
-                  accessibilityRole="progressbar"
-                  accessibilityValue={{ min: 0, max: 100, now: progress }}
-                >
+                <View style={styles.progressTrack}>
                   <View style={[styles.progressFill, { width: `${progress}%` }]} />
                 </View>
                 <View style={styles.statsRow}>
                   <View style={styles.stat}>
                     <Text style={styles.statNumber}>{total}</Text>
-                    <Text style={styles.statLabel}>Tareas</Text>
+                    <Text style={styles.statLabel}>TOTALES</Text>
                   </View>
                   <View style={styles.stat}>
                     <Text style={styles.statNumber}>{completed}</Text>
-                    <Text style={styles.statLabel}>Completadas</Text>
+                    <Text style={styles.statLabel}>COMPLETADAS</Text>
                   </View>
                   <View style={styles.stat}>
                     <Text style={styles.statNumber}>{pending}</Text>
-                    <Text style={styles.statLabel}>Pendientes</Text>
+                    <Text style={styles.statLabel}>PENDIENTES</Text>
                   </View>
                 </View>
               </View>
 
-              <Text style={styles.label}>NUEVA TAREA</Text>
+              {/* Alta rápida de tarea */}
+              <Text style={styles.label}>NUEVA TAREA RÁPIDA</Text>
               <View style={styles.addRow}>
                 <TextInput
                   testID="new-task-input"
@@ -243,23 +292,25 @@ export default function TaskManagerScreen() {
                 </Text>
               ) : null}
 
-              <Text style={[styles.label, styles.sectionHeading]}>MIS TAREAS</Text>
+              {/* Buscador reactivo */}
+              <Text style={[styles.label, styles.sectionHeading]}>FILTRAR TAREAS</Text>
               <View style={styles.searchWrap}>
                 <TextInput
                   testID="search-input"
-                  accessibilityLabel="Buscar tareas"
+                  accessibilityLabel="Buscar tareas por nombre"
                   placeholder="Buscar por nombre..."
                   placeholderTextColor={colors.placeholder}
                   value={query}
                   onChangeText={setQuery}
-                  returnKeyType="search"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  clearButtonMode="while-editing"
                   style={styles.searchInput}
                 />
                 {query.length > 0 ? (
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel="Borrar búsqueda"
-                    hitSlop={8}
+                    accessibilityLabel="Limpiar campo de búsqueda"
                     onPress={() => setQuery('')}
                     style={styles.clearButton}
                   >
@@ -267,38 +318,44 @@ export default function TaskManagerScreen() {
                   </Pressable>
                 ) : null}
               </View>
+
               <StatusTabs
                 current={status}
                 onChange={setStatus}
                 counts={{ todas: total, pendientes: pending, completadas: completed }}
               />
 
+              {/* Botones de control y simulación de error */}
               <View style={styles.actions}>
                 <Pressable
+                  testID="retry-button"
                   accessibilityRole="button"
-                  style={({ pressed }) => [styles.retryButton, pressed && styles.pressed]}
+                  accessibilityLabel="Recargar lista de tareas"
                   onPress={() => void loadTasks()}
+                  style={styles.retryButton}
                 >
-                  <Text style={styles.retryLabel}>↻ Recargar tareas</Text>
+                  <Text style={styles.retryLabel}>↻ Recargar</Text>
                 </Pressable>
                 <Pressable
-                  accessibilityRole="button"
                   testID="simulate-error-button"
-                  style={({ pressed }) => [styles.simulateButton, pressed && styles.pressed]}
+                  accessibilityRole="button"
+                  accessibilityLabel="Simular error de API"
                   onPress={() => void loadTasks(true)}
+                  style={styles.simulateButton}
                 >
                   <Text style={styles.simulateLabel}>⚠ Simular error API</Text>
                 </Pressable>
               </View>
 
               {error ? (
-                <View accessibilityRole="alert" style={styles.errorBox}>
-                  <Text style={styles.errorTitle}>No se pudieron cargar las tareas</Text>
+                <View style={styles.errorBox}>
+                  <Text style={styles.errorTitle}>Error al cargar</Text>
                   <Text style={styles.errorText}>{error}</Text>
                   <Pressable
                     accessibilityRole="button"
-                    style={({ pressed }) => [styles.errorRetry, pressed && styles.pressed]}
+                    accessibilityLabel="Reintentar carga de tareas"
                     onPress={() => void loadTasks()}
+                    style={styles.errorRetry}
                   >
                     <Text style={styles.errorRetryText}>Reintentar</Text>
                   </Pressable>
@@ -307,7 +364,7 @@ export default function TaskManagerScreen() {
 
               {loading ? (
                 <View style={styles.loading}>
-                  <ActivityIndicator color={colors.primary} size="large" />
+                  <ActivityIndicator size="small" color={colors.primary} />
                   <Text style={styles.loadingLabel}>Consultando tareas…</Text>
                 </View>
               ) : null}
@@ -330,12 +387,38 @@ const styles = StyleSheet.create({
   pressed: { opacity: 0.6 },
   eyebrowRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   eyebrow: { fontSize: 11, letterSpacing: 1.4, fontWeight: '800', color: colors.primary },
-  headerButtonsRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  accountButton: { backgroundColor: colors.surface, borderWidth: 1.5, borderColor: colors.border, paddingVertical: 8, paddingHorizontal: 12, borderRadius: radius.sm, minHeight: 40, justifyContent: 'center' },
+  headerButtonsRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  newBtn: {
+    backgroundColor: colors.primary,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: radius.sm,
+    minHeight: 38,
+    justifyContent: 'center',
+  },
+  newBtnText: { fontWeight: '900', color: '#FFFFFF', fontSize: 12 },
+  accountButton: {
+    backgroundColor: colors.surface,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    borderRadius: radius.sm,
+    minHeight: 38,
+    justifyContent: 'center',
+  },
   accountText: { fontWeight: '800', color: colors.primary, fontSize: 12 },
-  helpButton: { backgroundColor: colors.primarySoft, paddingVertical: 10, paddingHorizontal: 14, borderRadius: radius.sm, minHeight: 40, justifyContent: 'center' },
-  helpText: { fontWeight: '800', color: colors.primaryDark, fontSize: 13 },
-  heading: { fontSize: 32, fontWeight: '900', color: colors.text },
+  helpButton: {
+    backgroundColor: colors.primarySoft,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: radius.sm,
+    minHeight: 38,
+    justifyContent: 'center',
+  },
+  helpText: { fontWeight: '800', color: colors.primaryDark, fontSize: 12 },
+  heading: { fontSize: 32, fontWeight: '700', color: colors.text, letterSpacing: -0.5 },
+  userGreeting: { fontSize: 13, fontWeight: '700', color: colors.accentCoral, marginTop: -2 },
   brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10, marginTop: 12 },
   logo: { width: 38, height: 38, borderRadius: 12, backgroundColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
   logoMark: { color: colors.onDark, fontSize: 22, fontWeight: '900', marginTop: -1 },
@@ -344,13 +427,13 @@ const styles = StyleSheet.create({
   progressCard: { backgroundColor: colors.dark, borderRadius: radius.lg, padding: 16, marginBottom: 24 },
   progressTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
   progressLabel: { color: colors.onDarkMuted, fontWeight: '800', fontSize: 11, letterSpacing: 1 },
-  progressValue: { color: '#FFFFFF', fontWeight: '900', fontSize: 22 },
+  progressValue: { color: '#FFFFFF', fontWeight: '700', fontSize: 30, letterSpacing: -0.5 },
   progressTrack: { height: 8, borderRadius: 4, backgroundColor: colors.onDarkTrack, marginTop: 10, overflow: 'hidden' },
   progressFill: { height: 8, borderRadius: 4, backgroundColor: colors.accent },
   statsRow: { flexDirection: 'row', marginTop: 16, gap: 8 },
   stat: { flex: 1, backgroundColor: colors.onDarkChip, borderRadius: radius.sm, paddingVertical: 10, paddingHorizontal: 12 },
-  statNumber: { color: '#FFFFFF', fontWeight: '900', fontSize: 22 },
-  statLabel: { color: colors.onDarkMuted, fontWeight: '700', fontSize: 11, marginTop: 2 },
+  statNumber: { color: '#FFFFFF', fontWeight: '800', fontSize: 24 },
+  statLabel: { color: colors.onDarkMuted, fontWeight: '600', fontSize: 10.5, letterSpacing: 0.8, marginTop: 2 },
 
   label: { fontSize: 12, color: colors.bodyText, fontWeight: '800', letterSpacing: 1, marginBottom: 10 },
   sectionHeading: { marginTop: 14 },
