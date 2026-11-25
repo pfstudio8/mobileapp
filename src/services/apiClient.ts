@@ -12,23 +12,31 @@ export type BackendTask = {
   status?: BackendTaskStatus;
   created_at?: string;
   // Campos opcionales si el backend o el mock los incluyen
-  description?: string;
+  description?: string | null;
   priority?: TaskPriority;
   completed?: boolean;
+  is_archived?: boolean;
+  archived?: boolean;
 };
 
 /**
  * Convierte una tarea del contrato del backend (`status: 'pendiente' | 'resuelta'`)
- * al modelo interno de la app móvil (`completed: boolean`).
+ * al modelo interno de la app móvil (`completed: boolean`, `archived?: boolean`).
  */
 export function mapBackendTaskToTask(raw: BackendTask): Task {
-  return {
+  const mapped: Task = {
     id: String(raw.id),
     title: String(raw.title ?? ''),
     description: raw.description ?? '',
     priority: raw.priority ?? 'media',
     completed: typeof raw.completed === 'boolean' ? raw.completed : raw.status === 'resuelta',
   };
+  if (typeof raw.is_archived === 'boolean') {
+    mapped.archived = raw.is_archived;
+  } else if (typeof raw.archived === 'boolean') {
+    mapped.archived = raw.archived;
+  }
+  return mapped;
 }
 
 export class ApiError extends Error {
@@ -220,15 +228,15 @@ export async function request<T>(
   }
 }
 
-/** Adaptador mock contractual alineado con /api/auth/* y /api/tasks/* */
+/** Adaptador mock contractual alineado con /tasks/* y /api/* */
 async function handleMockFallback<T>(endpoint: string, options: RequestInit): Promise<T> {
   await new Promise((resolve) => setTimeout(resolve, 250));
 
   const method = (options.method || 'GET').toUpperCase();
-  const cleanEndpoint = endpoint.split('?')[0];
+  const cleanEndpoint = endpoint.split('?')[0].replace(/\/+$/, '') || '/';
 
-  // POST /api/auth/login
-  if (cleanEndpoint.endsWith('/api/auth/login') && method === 'POST') {
+  // POST /api/auth/login o /auth/login
+  if (cleanEndpoint.endsWith('/auth/login') && method === 'POST') {
     const body = options.body ? JSON.parse(options.body as string) : {};
     if (!body.email || !body.password) {
       throw new ApiError('Faltan credenciales', 400);
@@ -242,8 +250,8 @@ async function handleMockFallback<T>(endpoint: string, options: RequestInit): Pr
     } as unknown as T;
   }
 
-  // POST /api/auth/register
-  if (cleanEndpoint.endsWith('/api/auth/register') && method === 'POST') {
+  // POST /api/auth/register o /auth/register
+  if (cleanEndpoint.endsWith('/auth/register') && method === 'POST') {
     const body = options.body ? JSON.parse(options.body as string) : {};
     if (!body.email || !body.password) {
       throw new ApiError('Email y contraseña requeridos', 400);
@@ -257,27 +265,54 @@ async function handleMockFallback<T>(endpoint: string, options: RequestInit): Pr
     } as unknown as T;
   }
 
-  // GET /api/tasks
-  if (cleanEndpoint.endsWith('/api/tasks') && method === 'GET') {
-    return [...localMockTasks] as unknown as T;
+  // GET /tasks/ o /api/tasks
+  if ((cleanEndpoint === '/tasks' || cleanEndpoint.endsWith('/api/tasks')) && method === 'GET') {
+    const includeArchived =
+      !endpoint.includes('include_archived=') || endpoint.includes('include_archived=true');
+    const list = includeArchived
+      ? localMockTasks
+      : localMockTasks.filter((t) => !t.is_archived);
+    return [...list] as unknown as T;
   }
 
-  // POST /api/tasks
-  if (cleanEndpoint.endsWith('/api/tasks') && method === 'POST') {
+  // POST /tasks/ o /api/tasks
+  if ((cleanEndpoint === '/tasks' || cleanEndpoint.endsWith('/api/tasks')) && method === 'POST') {
     const body = options.body ? JSON.parse(options.body as string) : {};
+    const isCompleted = Boolean(body.completed);
     const newTask: BackendTask = {
       id: `task-${Date.now()}`,
       user_id: 'usr-facundo',
       title: body.title || 'Nueva tarea',
-      status: 'pendiente',
+      description: body.description ?? '',
+      priority: body.priority || 'media',
+      completed: isCompleted,
+      is_archived: false,
+      status: isCompleted ? 'resuelta' : 'pendiente',
       created_at: new Date().toISOString(),
     };
     localMockTasks = [newTask, ...localMockTasks];
     return newTask as unknown as T;
   }
 
+  // POST /api/tasks/archive-completed
+  if (cleanEndpoint.endsWith('/tasks/archive-completed') && method === 'POST') {
+    let archivedCount = 0;
+    localMockTasks = localMockTasks.map((t): BackendTask => {
+      const isDone = typeof t.completed === 'boolean' ? t.completed : t.status === 'resuelta';
+      if (isDone && !t.is_archived) {
+        archivedCount += 1;
+        return { ...t, is_archived: true };
+      }
+      return t;
+    });
+    return {
+      archived_count: archivedCount,
+      message: `Se archivaron ${archivedCount} tareas completadas`,
+    } as unknown as T;
+  }
+
   // PATCH /api/tasks/:id/status
-  const statusMatch = cleanEndpoint.match(/\/api\/tasks\/([^/]+)\/status$/);
+  const statusMatch = cleanEndpoint.match(/\/(?:api\/)?tasks\/([^/]+)\/status$/);
   if (statusMatch && method === 'PATCH') {
     const id = statusMatch[1];
     const body = options.body ? JSON.parse(options.body as string) : {};
@@ -285,7 +320,7 @@ async function handleMockFallback<T>(endpoint: string, options: RequestInit): Pr
     let foundTask: BackendTask | null = null;
     localMockTasks = localMockTasks.map((t): BackendTask => {
       if (String(t.id) === id) {
-        const updated: BackendTask = { ...t, status: nextStatus };
+        const updated: BackendTask = { ...t, status: nextStatus, completed: nextStatus === 'resuelta' };
         foundTask = updated;
         return updated;
       }
@@ -295,10 +330,62 @@ async function handleMockFallback<T>(endpoint: string, options: RequestInit): Pr
     return foundTask as unknown as T;
   }
 
-  // DELETE /api/tasks/:id
-  const deleteMatch = cleanEndpoint.match(/\/api\/tasks\/([^/]+)$/);
-  if (deleteMatch && method === 'DELETE') {
-    const id = deleteMatch[1];
+  // PATCH /api/tasks/:id/archive y /unarchive
+  const archiveMatch = cleanEndpoint.match(/\/(?:api\/)?tasks\/([^/]+)\/(archive|unarchive)$/);
+  if (archiveMatch && method === 'PATCH') {
+    const [, id, action] = archiveMatch;
+    const nextArchived = action === 'archive';
+    let foundTask: BackendTask | null = null;
+    localMockTasks = localMockTasks.map((t): BackendTask => {
+      if (String(t.id) === id) {
+        const updated: BackendTask = { ...t, is_archived: nextArchived };
+        foundTask = updated;
+        return updated;
+      }
+      return t;
+    });
+    if (!foundTask) throw new ApiError('Tarea no encontrada', 404);
+    return foundTask as unknown as T;
+  }
+
+  // GET, PUT y DELETE sobre /tasks/:id o /api/tasks/:id
+  const itemMatch = cleanEndpoint.match(/\/(?:api\/)?tasks\/([^/]+)$/);
+  if (itemMatch && method === 'GET') {
+    const id = itemMatch[1];
+    const found = localMockTasks.find((t) => String(t.id) === id);
+    if (!found) throw new ApiError('Tarea no encontrada', 404);
+    return { ...found } as unknown as T;
+  }
+
+  if (itemMatch && method === 'PUT') {
+    const id = itemMatch[1];
+    const body = options.body ? JSON.parse(options.body as string) : {};
+    let foundTask: BackendTask | null = null;
+    localMockTasks = localMockTasks.map((t): BackendTask => {
+      if (String(t.id) === id) {
+        const updated: BackendTask = {
+          ...t,
+          ...(body.title !== undefined ? { title: String(body.title).trim() } : {}),
+          ...(body.description !== undefined ? { description: String(body.description ?? '').trim() } : {}),
+          ...(body.priority !== undefined ? { priority: body.priority } : {}),
+          ...(typeof body.completed === 'boolean'
+            ? {
+                completed: body.completed,
+                status: body.completed ? 'resuelta' : 'pendiente',
+              }
+            : {}),
+        };
+        foundTask = updated;
+        return updated;
+      }
+      return t;
+    });
+    if (!foundTask) throw new ApiError('Tarea no encontrada', 404);
+    return foundTask as unknown as T;
+  }
+
+  if (itemMatch && method === 'DELETE') {
+    const id = itemMatch[1];
     localMockTasks = localMockTasks.filter((t) => String(t.id) !== id);
     return { success: true } as unknown as T;
   }

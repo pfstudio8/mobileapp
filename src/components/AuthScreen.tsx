@@ -1,18 +1,8 @@
-import { useState, useRef, useEffect } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  Pressable,
-  StyleSheet,
-  Animated,
-  Easing,
-  useWindowDimensions,
-  ScrollView,
-  Platform,
-  KeyboardAvoidingView,
-} from 'react-native';
-import { colors, radius, TOUCH } from '../theme';
+import { useState, useRef } from 'react';
+import { View, Pressable, StyleSheet, Animated, Easing, ScrollView, Platform, KeyboardAvoidingView, type LayoutChangeEvent } from 'react-native';
+import { Text, TextInput } from './Typo';
+import { TOUCH } from '../theme';
+import { useAuth } from '../context/AuthContext';
 
 type AuthMode = 'login' | 'register';
 
@@ -21,72 +11,114 @@ type Props = {
   onContinueAsGuest?: () => void;
 };
 
+const authColors = {
+  bg: '#0D0C18',
+  surface: '#161526',
+  surfaceCard: '#141322',
+  inputBg: '#181728',
+  inputBorder: 'rgba(255, 255, 255, 0.08)',
+  inputBorderFocus: '#7B6CF6',
+  borderSubtle: 'rgba(255, 255, 255, 0.07)',
+  primary: '#7B6CF6',
+  primaryHover: '#6857EA',
+  primaryLink: '#8B7CFF',
+  text: '#FFFFFF',
+  textSecondary: '#9F9BB8',
+  textMuted: '#8B87A6',
+  placeholder: '#6E6A85',
+  coral: '#FF7E55',
+  coralSoft: '#FFA27F',
+  dangerBg: 'rgba(239, 68, 68, 0.14)',
+  dangerBorder: '#EF4444',
+  dangerText: '#FCA5A5',
+  successBg: 'rgba(16, 185, 129, 0.14)',
+  successBorder: '#10B981',
+  successText: '#6EE7B7',
+};
+
+const DISPLAY_FONT = Platform.select({
+  ios: 'Georgia',
+  android: 'serif',
+  web: 'Georgia, "Times New Roman", serif',
+  default: undefined,
+});
+
 export function AuthScreen({ onSuccess, onContinueAsGuest }: Props) {
   const [mode, setMode] = useState<AuthMode>('login');
-  const { width } = useWindowDimensions();
-  const isLargeScreen = width >= 820;
+
+  let auth: ReturnType<typeof useAuth> | null = null;
+  try {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    auth = useAuth();
+  } catch {
+    // Silencioso en tests que rendericen AuthScreen sin AuthProvider
+  }
 
   // Campos de formulario
-  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(true);
 
-  // Estados de focus en inputs para resaltar borde suave -> violeta
+  // Estados de focus y hover
   const [focusedField, setFocusedField] = useState<string | null>(null);
+  const [btnHovered, setBtnHovered] = useState(false);
+  const [linkHovered, setLinkHovered] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
-  // Mensajes de error / éxito
+  // Mensajes de feedback
   const [formError, setFormError] = useState<string | null>(null);
   const [formSuccess, setFormSuccess] = useState<string | null>(null);
 
-  // Estados de hover (para web)
-  const [btnHovered, setBtnHovered] = useState(false);
-  const [linkHovered, setLinkHovered] = useState(false);
-  const [guestHovered, setGuestHovered] = useState(false);
+  // Medición del ancho del segmented control para que el slide sea exacto en cualquier pantalla
+  const [tabTrackWidth, setTabTrackWidth] = useState(320);
 
-  // Animaciones para el "slide satisfactorio"
-  // slideAnim: 0 = login, 1 = register
+  // Animaciones de slide suave entre Login y Register
   const slideAnim = useRef(new Animated.Value(0)).current;
   const contentFadeAnim = useRef(new Animated.Value(1)).current;
+
+  function handleTabTrackLayout(event: LayoutChangeEvent) {
+    const measured = event.nativeEvent.layout.width;
+    if (measured > 0) {
+      setTabTrackWidth(measured);
+    }
+  }
 
   function switchMode(newMode: AuthMode) {
     if (newMode === mode) return;
     setFormError(null);
     setFormSuccess(null);
 
-    // Animación suave coordinada: fade out rápido, slide, y fade in
     Animated.parallel([
       Animated.timing(contentFadeAnim, {
         toValue: 0,
-        duration: 120,
+        duration: 110,
         useNativeDriver: true,
       }),
       Animated.timing(slideAnim, {
         toValue: newMode === 'register' ? 1 : 0,
-        duration: 340,
-        easing: Easing.bezier(0.22, 1, 0.36, 1), // ease-out cubic elegante y satisfactorio
+        duration: 320,
+        easing: Easing.bezier(0.22, 1, 0.36, 1),
         useNativeDriver: true,
       }),
     ]).start(() => {
       setMode(newMode);
       Animated.timing(contentFadeAnim, {
         toValue: 1,
-        duration: 200,
+        duration: 190,
         easing: Easing.out(Easing.ease),
         useNativeDriver: true,
       }).start();
     });
   }
 
-  function handleSubmit() {
+  async function handleSubmit() {
     setFormError(null);
     setFormSuccess(null);
 
     if (mode === 'register') {
-      if (!name.trim()) {
-        setFormError('Por favor ingresá tu nombre completo.');
-        return;
-      }
       if (!email.trim() || !email.includes('@')) {
         setFormError('Ingresá un correo electrónico válido.');
         return;
@@ -100,13 +132,25 @@ export function AuthScreen({ onSuccess, onContinueAsGuest }: Props) {
         return;
       }
 
-      setFormSuccess('¡Cuenta creada con éxito! Ingresando...');
-      setTimeout(() => {
-        onSuccess?.();
-      }, 700);
+      setSubmitting(true);
+      try {
+        if (auth) {
+          await auth.signUp(email.split('@')[0], email.trim(), password);
+        }
+        setFormSuccess('¡Cuenta creada con éxito! Ingresando...');
+        setTimeout(() => {
+          onSuccess?.();
+        }, 450);
+      } catch (err) {
+        setFormError(
+          err instanceof Error ? err.message : 'No pudimos crear tu cuenta. Intentá nuevamente.',
+        );
+      } finally {
+        setSubmitting(false);
+      }
     } else {
       if (!email.trim()) {
-        setFormError('Por favor ingresá tu correo o usuario.');
+        setFormError('Por favor ingresá tu correo electrónico.');
         return;
       }
       if (!password) {
@@ -114,27 +158,39 @@ export function AuthScreen({ onSuccess, onContinueAsGuest }: Props) {
         return;
       }
 
-      setFormSuccess('¡Inicio de sesión exitoso! Cargando tus tareas...');
-      setTimeout(() => {
-        onSuccess?.();
-      }, 600);
+      setSubmitting(true);
+      try {
+        if (auth) {
+          await auth.signIn(email.trim(), password);
+        }
+        setFormSuccess('¡Bienvenido de vuelta! Cargando tus tareas...');
+        setTimeout(() => {
+          onSuccess?.();
+        }, 450);
+      } catch (err) {
+        setFormError(
+          err instanceof Error ? err.message : 'Credenciales inválidas. Verificá tus datos.',
+        );
+      } finally {
+        setSubmitting(false);
+      }
     }
   }
 
-  // Interpolaciones para el slide del panel izquierdo y del formulario
-  const leftSlideX = slideAnim.interpolate({
+  const pillWidth = Math.max((tabTrackWidth - 8) / 2, 100);
+  const tabPillX = slideAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [0, -18],
+    outputRange: [0, pillWidth],
   });
 
   const formSlideX = slideAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [0, 16],
+    outputRange: [0, -14],
   });
 
-  const tabPillX = slideAnim.interpolate({
+  const heroCardRotate = slideAnim.interpolate({
     inputRange: [0, 1],
-    outputRange: [3, 142],
+    outputRange: ['9deg', '4deg'],
   });
 
   return (
@@ -143,385 +199,352 @@ export function AuthScreen({ onSuccess, onContinueAsGuest }: Props) {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <ScrollView
-        contentContainerStyle={[
-          styles.scrollContainer,
-          isLargeScreen && styles.scrollContainerLarge,
-        ]}
+        contentContainerStyle={styles.scrollContainer}
         keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
-        <View
-          style={[
-            styles.cardContainer,
-            isLargeScreen ? styles.cardContainerRow : styles.cardContainerColumn,
-          ]}
-        >
-          {/* ================= PANEL IZQUIERDO (Índigo Profundo #1E1B4B con detalles Coral #FFA27F) ================= */}
-          <View style={[styles.leftPanel, isLargeScreen ? styles.leftPanelWide : styles.leftPanelMobile]}>
-            {/* Círculos decorativos sutiles de fondo */}
-            <View style={styles.glowCircleOne} />
-            <View style={styles.glowCircleTwo} />
-
-            {/* Header de Marca */}
-            <View style={styles.brandHeader}>
-              <View style={styles.brandBadge}>
-                <Text style={styles.brandCheck}>✓</Text>
-              </View>
-              <Text style={styles.brandName}>Taskify</Text>
+        <View style={styles.contentColumn}>
+          {/* ================= MARCA SUPERIOR ================= */}
+          <View style={styles.brandRow}>
+            <View style={styles.brandIconBox}>
+              <Text style={styles.brandIconLetter}>
+                T<Text style={styles.brandIconDot}>.</Text>
+              </Text>
             </View>
+            <Text style={styles.brandTitle}>Taskify</Text>
+          </View>
 
-            {/* Contenido motivador animado */}
+          {/* ================= BANNER HERO ILUSTRATIVO ================= */}
+          <View style={styles.heroBanner}>
+            {/* Halos ambientales suaves (durazno arriba-izq, teal abajo-centro, violeta derecha) */}
+            <View style={styles.glowWarm} />
+            <View style={styles.glowTeal} />
+            <View style={styles.glowViolet} />
+
+            {/* Destellos decorativos */}
+            <Text style={styles.sparkleLeft}>✦</Text>
+            <Text style={styles.sparkleTop}>✦</Text>
+
+            {/* Tarjeta inclinada de checklist con badge flotante */}
             <Animated.View
               style={[
-                styles.motivationBox,
-                {
-                  opacity: contentFadeAnim,
-                  transform: [{ translateX: leftSlideX }],
-                },
+                styles.floatingChecklistWrap,
+                { transform: [{ rotate: heroCardRotate }] },
               ]}
             >
-              {mode === 'login' ? (
-                <>
-                  <View style={styles.taglineChip}>
-                    <Text style={styles.taglineChipText}>TU ESPACIO DE ENFOQUE</Text>
-                  </View>
-                  <Text style={styles.motivationHeading}>
-                    ¡Hola de nuevo! Convertí cada día en una victoria personal.
-                  </Text>
-                  <Text style={styles.motivationLead}>
-                    Organizarte no se trata de hacer más tareas, sino de hacer lo que realmente importa con calma y claridad mental.
-                  </Text>
-
-                  {/* Lista de beneficios motivadores con tildes en durazno/coral */}
-                  <View style={styles.benefitList}>
-                    <View style={styles.benefitItem}>
-                      <View style={styles.checkCircle}>
-                        <Text style={styles.checkIcon}>✓</Text>
-                      </View>
-                      <View style={styles.benefitContent}>
-                        <Text style={styles.benefitTitle}>Foco total y sin distracciones</Text>
-                        <Text style={styles.benefitDesc}>
-                          Sabé exactamente qué sigue y tachá lo urgente con tranquilidad.
-                        </Text>
-                      </View>
-                    </View>
-
-                    <View style={styles.benefitItem}>
-                      <View style={styles.checkCircle}>
-                        <Text style={styles.checkIcon}>✓</Text>
-                      </View>
-                      <View style={styles.benefitContent}>
-                        <Text style={styles.benefitTitle}>Progreso visible en tiempo real</Text>
-                        <Text style={styles.benefitDesc}>
-                          Sentí la satisfacción diaria de ver tus objetivos cumplidos.
-                        </Text>
-                      </View>
-                    </View>
-
-                    <View style={styles.benefitItem}>
-                      <View style={styles.checkCircle}>
-                        <Text style={styles.checkIcon}>✓</Text>
-                      </View>
-                      <View style={styles.benefitContent}>
-                        <Text style={styles.benefitTitle}>Menos estrés, más tiempo libre</Text>
-                        <Text style={styles.benefitDesc}>
-                          Liberá tu mente sabiendo que nada importante se te escapa.
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-
-                  <View style={styles.quoteBox}>
-                    <Text style={styles.quoteText}>
-                      “La constancia vence a la improvisación. Hacé que hoy cuente.”
-                    </Text>
-                  </View>
-                </>
-              ) : (
-                <>
-                  <View style={styles.taglineChip}>
-                    <Text style={styles.taglineChipText}>COMIENZO DE TUS METAS</Text>
-                  </View>
-                  <Text style={styles.motivationHeading}>
-                    Desbloqueá tu máximo potencial y superá tus límites.
-                  </Text>
-                  <Text style={styles.motivationLead}>
-                    Unite a una forma más simple y gratificante de organizar tu vida. Tu mejor versión empieza con una lista clara y accionable.
-                  </Text>
-
-                  {/* Lista de beneficios motivadores para registro con tildes coral */}
-                  <View style={styles.benefitList}>
-                    <View style={styles.benefitItem}>
-                      <View style={styles.checkCircle}>
-                        <Text style={styles.checkIcon}>✓</Text>
-                      </View>
-                      <View style={styles.benefitContent}>
-                        <Text style={styles.benefitTitle}>Diseñado para impulsarte</Text>
-                        <Text style={styles.benefitDesc}>
-                          Una interfaz limpia y placentera que hace que tachar tareas dé gusto.
-                        </Text>
-                      </View>
-                    </View>
-
-                    <View style={styles.benefitItem}>
-                      <View style={styles.checkCircle}>
-                        <Text style={styles.checkIcon}>✓</Text>
-                      </View>
-                      <View style={styles.benefitContent}>
-                        <Text style={styles.benefitTitle}>Cero fricción, 100% agilidad</Text>
-                        <Text style={styles.benefitDesc}>
-                          Creá, filtrá y completá tareas en segundos sin configuraciones eternas.
-                        </Text>
-                      </View>
-                    </View>
-
-                    <View style={styles.benefitItem}>
-                      <View style={styles.checkCircle}>
-                        <Text style={styles.checkIcon}>✓</Text>
-                      </View>
-                      <View style={styles.benefitContent}>
-                        <Text style={styles.benefitTitle}>Gratis y siempre disponible</Text>
-                        <Text style={styles.benefitDesc}>
-                          Tu gestor personal listo para acompañarte estés donde estés.
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-
-                  <View style={styles.quoteBox}>
-                    <Text style={styles.quoteText}>
-                      “El secreto para salir adelante es simplemente dar el primer paso.”
-                    </Text>
-                  </View>
-                </>
-              )}
+              <View style={styles.floatingCheckBadge}>
+                <Text style={styles.floatingCheckMark}>✓</Text>
+              </View>
+              <View style={styles.miniCard}>
+                <View style={styles.miniRow}>
+                  <View style={[styles.miniDot, { backgroundColor: '#34D399' }]} />
+                  <View style={[styles.miniBar, { width: 58 }]} />
+                </View>
+                <View style={styles.miniRow}>
+                  <View style={[styles.miniDot, { backgroundColor: '#818CF8' }]} />
+                  <View style={[styles.miniBar, { width: 46 }]} />
+                </View>
+                <View style={styles.miniRow}>
+                  <View style={[styles.miniDot, { backgroundColor: '#F472B6' }]} />
+                  <View style={[styles.miniBar, { width: 52 }]} />
+                </View>
+                <View style={styles.miniRow}>
+                  <View style={[styles.miniDot, { backgroundColor: '#FBBF24' }]} />
+                  <View style={[styles.miniBar, { width: 38 }]} />
+                </View>
+              </View>
             </Animated.View>
           </View>
 
-          {/* ================= PANEL DERECHO / FORMULARIO (Lavanda #FAF8FF, Inputs Blancos, Botón Violeta #5B3FD9) ================= */}
-          <View style={[styles.formPanel, isLargeScreen ? styles.formPanelWide : styles.formPanelMobile]}>
-            {/* Switcher deslizante superior con pill animada */}
-            <View style={styles.tabTrack}>
-              <Animated.View
-                style={[
-                  styles.tabIndicator,
-                  {
-                    transform: [{ translateX: tabPillX }],
-                  },
-                ]}
-              />
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Formulario de iniciar sesión"
-                style={styles.tabBtn}
-                onPress={() => switchMode('login')}
-              >
-                <Text style={[styles.tabBtnText, mode === 'login' && styles.tabBtnTextActive]}>
-                  Iniciar sesión
-                </Text>
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Formulario de registro"
-                style={styles.tabBtn}
-                onPress={() => switchMode('register')}
-              >
-                <Text style={[styles.tabBtnText, mode === 'register' && styles.tabBtnTextActive]}>
-                  Crear cuenta
-                </Text>
-              </Pressable>
-            </View>
+          {/* ================= TÍTULO Y BAJADA ================= */}
+          <Animated.View
+            style={[
+              styles.headerBlock,
+              {
+                opacity: contentFadeAnim,
+                transform: [{ translateX: formSlideX }],
+              },
+            ]}
+          >
+            <Text style={styles.heading}>
+              {mode === 'login' ? '¡Bienvenido, volviste!' : '¡Creá tu cuenta gratis!'}
+            </Text>
+            <Text style={styles.subtitle}>
+              {mode === 'login'
+                ? 'Ingresá para seguir con tus victorias diarias y mantener el foco.'
+                : 'Sumate a Taskify para organizar tu día y convertir metas en logros.'}
+            </Text>
+          </Animated.View>
 
-            {/* Cabecera del formulario */}
-            <View style={styles.formHeader}>
-              <Text style={styles.formTitle}>
-                {mode === 'login' ? '¡Bienvenido de vuelta!' : 'Creá tu cuenta gratis'}
-              </Text>
-              <Text style={styles.formSubtitle}>
-                {mode === 'login'
-                  ? 'Ingresá tus credenciales para acceder a tus tareas.'
-                  : 'Completá los datos y empezá a gestionar tus proyectos hoy.'}
-              </Text>
-            </View>
-
-            {/* Mensajes de feedback */}
-            {formError ? (
-              <View style={styles.errorAlert}>
-                <Text style={styles.errorAlertText}>⚠️ {formError}</Text>
-              </View>
-            ) : null}
-
-            {formSuccess ? (
-              <View style={styles.successAlert}>
-                <Text style={styles.successAlertText}>✨ {formSuccess}</Text>
-              </View>
-            ) : null}
-
-            {/* Formulario con Slide Suave */}
+          {/* ================= SEGMENTED CONTROL DESLIZANTE ================= */}
+          <View style={styles.tabTrack} onLayout={handleTabTrackLayout}>
             <Animated.View
               style={[
-                styles.formFields,
+                styles.tabPill,
                 {
-                  opacity: contentFadeAnim,
-                  transform: [{ translateX: formSlideX }],
+                  width: pillWidth,
+                  transform: [{ translateX: tabPillX }],
                 },
               ]}
+            />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Iniciar sesión"
+              style={styles.tabButton}
+              onPress={() => switchMode('login')}
             >
-              {mode === 'register' ? (
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Nombre completo</Text>
-                  <TextInput
-                    testID="register-name-input"
-                    value={name}
-                    onChangeText={setName}
-                    placeholder="Ej. Alex Turner"
-                    placeholderTextColor={colors.placeholder}
-                    onFocus={() => setFocusedField('name')}
-                    onBlur={() => setFocusedField(null)}
-                    style={[
-                      styles.textInput,
-                      focusedField === 'name' && styles.textInputFocused,
-                    ]}
-                  />
-                </View>
-              ) : null}
+              <Text style={[styles.tabText, mode === 'login' && styles.tabTextActive]}>
+                Iniciar sesión
+              </Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Crear cuenta"
+              style={styles.tabButton}
+              onPress={() => switchMode('register')}
+            >
+              <Text style={[styles.tabText, mode === 'register' && styles.tabTextActive]}>
+                Crear cuenta
+              </Text>
+            </Pressable>
+          </View>
 
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Correo electrónico</Text>
-                <TextInput
-                  testID="auth-email-input"
-                  value={email}
-                  onChangeText={setEmail}
-                  placeholder="nombre@ejemplo.com"
-                  placeholderTextColor={colors.placeholder}
-                  keyboardType="email-address"
-                  autoCapitalize="none"
-                  onFocus={() => setFocusedField('email')}
-                  onBlur={() => setFocusedField(null)}
-                  style={[
-                    styles.textInput,
-                    focusedField === 'email' && styles.textInputFocused,
-                  ]}
-                />
-              </View>
+          {/* ================= ALERTAS DE FEEDBACK ================= */}
+          {formError ? (
+            <View style={styles.errorAlert}>
+              <Text style={styles.errorAlertText}>⚠️ {formError}</Text>
+            </View>
+          ) : null}
 
-              <View style={styles.inputGroup}>
-                <View style={styles.labelRow}>
-                  <Text style={styles.inputLabel}>Contraseña</Text>
-                  {mode === 'login' ? (
-                    <Pressable
-                      onPress={() => alert('Ingresá cualquier contraseña en esta demo.')}
-                      style={({ pressed }) => [styles.linkWrap, pressed && styles.linkPressed]}
-                    >
-                      <Text style={styles.inlineLink}>¿Olvidaste tu clave?</Text>
-                    </Pressable>
-                  ) : null}
-                </View>
+          {formSuccess ? (
+            <View style={styles.successAlert}>
+              <Text style={styles.successAlertText}>✨ {formSuccess}</Text>
+            </View>
+          ) : null}
+
+          {/* ================= CAMPOS DEL FORMULARIO ================= */}
+          <Animated.View
+            style={[
+              styles.formBlock,
+              {
+                opacity: contentFadeAnim,
+                transform: [{ translateX: formSlideX }],
+              },
+            ]}
+          >
+            {/* Correo electrónico */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Correo electrónico</Text>
+              <TextInput
+                testID="auth-email-input"
+                value={email}
+                onChangeText={(text) => {
+                  setEmail(text);
+                  if (formError) setFormError(null);
+                }}
+                placeholder="nombre@ejemplo.com"
+                placeholderTextColor={authColors.placeholder}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                onFocus={() => setFocusedField('email')}
+                onBlur={() => setFocusedField(null)}
+                style={[
+                  styles.textInput,
+                  focusedField === 'email' && styles.textInputFocused,
+                ]}
+              />
+            </View>
+
+            {/* Contraseña con botón de mostrar/ocultar */}
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Contraseña</Text>
+              <View
+                style={[
+                  styles.passwordContainer,
+                  focusedField === 'password' && styles.textInputFocused,
+                ]}
+              >
                 <TextInput
                   testID="auth-password-input"
                   value={password}
-                  onChangeText={setPassword}
-                  placeholder="Mínimo 6 caracteres"
-                  placeholderTextColor={colors.placeholder}
-                  secureTextEntry
+                  onChangeText={(text) => {
+                    setPassword(text);
+                    if (formError) setFormError(null);
+                  }}
+                  placeholder={mode === 'login' ? '••••••••••' : 'Mínimo 6 caracteres'}
+                  placeholderTextColor={authColors.placeholder}
+                  secureTextEntry={!showPassword}
                   autoCapitalize="none"
                   onFocus={() => setFocusedField('password')}
                   onBlur={() => setFocusedField(null)}
-                  style={[
-                    styles.textInput,
-                    focusedField === 'password' && styles.textInputFocused,
-                  ]}
+                  style={styles.passwordInput}
                 />
+                <Pressable
+                  testID="toggle-password-visibility"
+                  accessibilityRole="button"
+                  accessibilityLabel={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                  onPress={() => setShowPassword((prev) => !prev)}
+                  style={styles.eyeButton}
+                >
+                  <Text style={styles.eyeIcon}>{showPassword ? '🙈' : '👁'}</Text>
+                </Pressable>
               </View>
+            </View>
 
-              {mode === 'register' ? (
-                <View style={styles.inputGroup}>
-                  <Text style={styles.inputLabel}>Confirmar contraseña</Text>
+            {/* Confirmar contraseña (solo en Crear cuenta) */}
+            {mode === 'register' ? (
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Confirmar contraseña</Text>
+                <View
+                  style={[
+                    styles.passwordContainer,
+                    focusedField === 'confirm' && styles.textInputFocused,
+                  ]}
+                >
                   <TextInput
                     testID="register-confirm-password-input"
                     value={confirmPassword}
-                    onChangeText={setConfirmPassword}
+                    onChangeText={(text) => {
+                      setConfirmPassword(text);
+                      if (formError) setFormError(null);
+                    }}
                     placeholder="Repetí tu contraseña"
-                    placeholderTextColor={colors.placeholder}
-                    secureTextEntry
+                    placeholderTextColor={authColors.placeholder}
+                    secureTextEntry={!showConfirmPassword}
                     autoCapitalize="none"
                     onFocus={() => setFocusedField('confirm')}
                     onBlur={() => setFocusedField(null)}
-                    style={[
-                      styles.textInput,
-                      focusedField === 'confirm' && styles.textInputFocused,
-                    ]}
+                    style={styles.passwordInput}
                   />
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={
+                      showConfirmPassword ? 'Ocultar confirmación' : 'Mostrar confirmación'
+                    }
+                    onPress={() => setShowConfirmPassword((prev) => !prev)}
+                    style={styles.eyeButton}
+                  >
+                    <Text style={styles.eyeIcon}>{showConfirmPassword ? '🙈' : '👁'}</Text>
+                  </Pressable>
                 </View>
-              ) : null}
-
-              {/* Botón Principal Violeta (#5B3FD9) con oscurecimiento en hover/pressed */}
-              <Pressable
-                testID="auth-submit-button"
-                accessibilityRole="button"
-                accessibilityLabel={mode === 'login' ? 'Iniciar sesión' : 'Registrarse'}
-                onPress={handleSubmit}
-                // @ts-ignore soporte hover web
-                onHoverIn={() => setBtnHovered(true)}
-                // @ts-ignore
-                onHoverOut={() => setBtnHovered(false)}
-                style={({ pressed }) => [
-                  styles.submitButton,
-                  (btnHovered || pressed) && styles.submitButtonDarker,
-                ]}
-              >
-                <Text style={styles.submitButtonText}>
-                  {mode === 'login' ? 'Ingresar a Taskify' : 'Crear mi cuenta'}
-                </Text>
-              </Pressable>
-
-              {/* Alternar entre Login y Register */}
-              <View style={styles.switchRow}>
-                <Text style={styles.switchPrompt}>
-                  {mode === 'login' ? '¿Aún no tenés una cuenta?' : '¿Ya tenés una cuenta?'}
-                </Text>
+              </View>
+            ) : (
+              /* Fila Recordarme + ¿Olvidaste tu clave? (solo en Iniciar sesión) */
+              <View style={styles.optionsRow}>
                 <Pressable
-                  onPress={() => switchMode(mode === 'login' ? 'register' : 'login')}
-                  // @ts-ignore
-                  onHoverIn={() => setLinkHovered(true)}
-                  // @ts-ignore
-                  onHoverOut={() => setLinkHovered(false)}
-                  style={({ pressed }) => [
-                    styles.linkWrap,
-                    (linkHovered || pressed) && styles.linkHovered,
-                  ]}
+                  testID="remember-me-checkbox"
+                  accessibilityRole="checkbox"
+                  accessibilityState={{ checked: rememberMe }}
+                  onPress={() => setRememberMe((prev) => !prev)}
+                  style={styles.rememberRow}
                 >
-                  <Text style={[styles.mainLink, (linkHovered) && styles.mainLinkDarker]}>
-                    {mode === 'login' ? 'Registrate acá' : 'Iniciá sesión'}
-                  </Text>
+                  <View style={[styles.checkboxBox, rememberMe && styles.checkboxChecked]}>
+                    {rememberMe ? <Text style={styles.checkboxTick}>✓</Text> : null}
+                  </View>
+                  <Text style={styles.rememberText}>Recordarme</Text>
+                </Pressable>
+
+                <Pressable
+                  accessibilityRole="button"
+                  onPress={() =>
+                    setFormError('Contactá a tu docente o creá una cuenta nueva para probar.')
+                  }
+                  style={({ pressed }) => [pressed && styles.pressed]}
+                >
+                  <Text style={styles.forgotLink}>¿Olvidaste tu clave?</Text>
                 </Pressable>
               </View>
+            )}
 
-              {/* Acceso rápido / Demo */}
-              <View style={styles.guestDivider}>
-                <View style={styles.dividerLine} />
-                <Text style={styles.dividerText}>o probá sin cuenta</Text>
-                <View style={styles.dividerLine} />
-              </View>
+            {/* Botón CTA Principal */}
+            <Pressable
+              testID="auth-submit-button"
+              accessibilityRole="button"
+              accessibilityLabel={mode === 'login' ? 'Ingresar a Taskify' : 'Crear mi cuenta'}
+              disabled={submitting}
+              onPress={handleSubmit}
+              // @ts-ignore soporte hover web
+              onHoverIn={() => setBtnHovered(true)}
+              // @ts-ignore
+              onHoverOut={() => setBtnHovered(false)}
+              style={({ pressed }) => [
+                styles.submitButton,
+                (btnHovered || pressed) && styles.submitButtonHover,
+                submitting && styles.submitButtonDisabled,
+              ]}
+            >
+              <Text style={styles.submitButtonText}>
+                {submitting
+                  ? 'Conectando...'
+                  : mode === 'login'
+                    ? 'Ingresar a Taskify  →'
+                    : 'Crear mi cuenta  →'}
+              </Text>
+            </Pressable>
+          </Animated.View>
 
-              <Pressable
-                testID="auth-guest-button"
-                accessibilityRole="button"
-                onPress={() => {
-                  onContinueAsGuest ? onContinueAsGuest() : onSuccess?.();
-                }}
-                // @ts-ignore
-                onHoverIn={() => setGuestHovered(true)}
-                // @ts-ignore
-                onHoverOut={() => setGuestHovered(false)}
-                style={({ pressed }) => [
-                  styles.guestButton,
-                  (guestHovered || pressed) && styles.guestButtonActive,
-                ]}
-              >
-                <Text style={styles.guestButtonText}>Continuar al gestor de tareas →</Text>
-              </Pressable>
-            </Animated.View>
+          {/* ================= TARJETA MOTIVADORA INFERIOR ================= */}
+          <Animated.View
+            style={[
+              styles.habitCard,
+              {
+                opacity: contentFadeAnim,
+                transform: [{ translateX: formSlideX }],
+              },
+            ]}
+          >
+            <View style={styles.habitIconBox}>
+              <Text style={styles.habitIcon}>💡</Text>
+            </View>
+            <View style={styles.habitContent}>
+              <Text style={styles.habitEyebrow}>
+                {mode === 'login' ? 'HÁBITO DE HOY' : 'TU PRIMER PASO'}
+              </Text>
+              <Text style={styles.habitText}>
+                {mode === 'login'
+                  ? 'El enfoque diario construye grandes logros. Empezá con una sola tarea bien hecha.'
+                  : 'Organizar tus metas te da claridad y paz mental. Creá tu cuenta en segundos.'}
+              </Text>
+            </View>
+          </Animated.View>
+
+          {/* ================= FOOTER DE CAMBIO DE MODO ================= */}
+          <View style={styles.footerRow}>
+            <Text style={styles.footerPrompt}>
+              {mode === 'login' ? '¿No tenés una cuenta todavía?' : '¿Ya tenés una cuenta?'}
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => switchMode(mode === 'login' ? 'register' : 'login')}
+              // @ts-ignore
+              onHoverIn={() => setLinkHovered(true)}
+              // @ts-ignore
+              onHoverOut={() => setLinkHovered(false)}
+              style={({ pressed }) => [pressed && styles.pressed]}
+            >
+              <Text style={[styles.footerLink, linkHovered && styles.footerLinkHover]}>
+                {mode === 'login' ? 'Creá una gratis' : 'Iniciá sesión'}
+              </Text>
+            </Pressable>
           </View>
+
+          {/* Acceso directo como invitado para pruebas / demo */}
+          <Pressable
+            testID="auth-guest-button"
+            accessibilityRole="button"
+            onPress={() => {
+              try {
+                auth?.continueAsGuest();
+              } catch {
+                // ignorar
+              }
+              onContinueAsGuest ? onContinueAsGuest() : onSuccess?.();
+            }}
+            style={({ pressed }) => [styles.guestLinkWrap, pressed && styles.pressed]}
+          >
+            <Text style={styles.guestLinkText}>Continuar sin cuenta (modo demo) →</Text>
+          </Pressable>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -531,393 +554,441 @@ export function AuthScreen({ onSuccess, onContinueAsGuest }: Props) {
 const styles = StyleSheet.create({
   screenWrapper: {
     flex: 1,
-    backgroundColor: colors.bg, // #FAF8FF lavanda casi blanco
+    backgroundColor: authColors.bg,
   },
   scrollContainer: {
     flexGrow: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 16,
+    paddingHorizontal: 22,
+    paddingVertical: 24,
   },
-  scrollContainerLarge: {
-    padding: 32,
-  },
-  cardContainer: {
+  contentColumn: {
     width: '100%',
-    maxWidth: 960,
-    backgroundColor: colors.surface,
-    borderRadius: radius.xl,
-    overflow: 'hidden',
-    shadowColor: colors.indigoDeep,
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.1,
-    shadowRadius: 24,
-    elevation: 8,
-    borderWidth: 1,
-    borderColor: colors.border,
+    maxWidth: 420,
   },
-  cardContainerRow: {
-    flexDirection: 'row',
-    minHeight: 620,
-  },
-  cardContainerColumn: {
-    flexDirection: 'column',
+  pressed: {
+    opacity: 0.7,
   },
 
-  // ================= PANEL IZQUIERDO =================
-  leftPanel: {
-    backgroundColor: colors.indigoDeep, // #1E1B4B índigo profundo
-    padding: 36,
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  leftPanelWide: {
-    width: '45%',
-    justifyContent: 'space-between',
-  },
-  leftPanelMobile: {
-    width: '100%',
-    padding: 24,
-  },
-  glowCircleOne: {
-    position: 'absolute',
-    top: -50,
-    right: -40,
-    width: 180,
-    height: 180,
-    borderRadius: 90,
-    backgroundColor: 'rgba(91, 63, 217, 0.25)', // halo violeta
-  },
-  glowCircleTwo: {
-    position: 'absolute',
-    bottom: -60,
-    left: -40,
-    width: 200,
-    height: 200,
-    borderRadius: 100,
-    backgroundColor: 'rgba(255, 162, 127, 0.12)', // halo durazno/coral
-  },
-  brandHeader: {
+  // ================= MARCA SUPERIOR =================
+  brandRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    marginBottom: 28,
+    marginBottom: 20,
   },
-  brandBadge: {
+  brandIconBox: {
     width: 38,
     height: 38,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255, 162, 127, 0.2)', // cápsula traslúcida coral
+    borderRadius: 11,
+    backgroundColor: '#151329',
     borderWidth: 1.5,
-    borderColor: colors.accentCoral, // #FFA27F
+    borderColor: '#4E41A8',
     alignItems: 'center',
     justifyContent: 'center',
   },
-  brandCheck: {
-    color: colors.accentCoral, // #FFA27F tilde coral
+  brandIconLetter: {
+    color: '#8E84FF',
+    fontSize: 20,
+    fontWeight: '900',
+    letterSpacing: -0.5,
+  },
+  brandIconDot: {
+    color: authColors.coral,
     fontSize: 22,
     fontWeight: '900',
-    marginTop: -2,
   },
-  brandName: {
-    color: colors.onDark,
-    fontSize: 24,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-  },
-  motivationBox: {
-    flex: 1,
-    justifyContent: 'center',
-  },
-  taglineChip: {
-    alignSelf: 'flex-start',
-    backgroundColor: 'rgba(255, 162, 127, 0.16)',
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 20,
-    marginBottom: 14,
-  },
-  taglineChipText: {
-    color: colors.accentCoral, // #FFA27F
-    fontWeight: '900',
-    fontSize: 10,
-    letterSpacing: 1.5,
-  },
-  motivationHeading: {
-    color: colors.onDark,
-    fontSize: 26,
-    fontWeight: '900',
-    lineHeight: 33,
-    marginBottom: 12,
-  },
-  motivationLead: {
-    color: colors.onDarkMuted,
-    fontSize: 14,
-    lineHeight: 22,
-    marginBottom: 26,
-  },
-  benefitList: {
-    gap: 16,
-    marginBottom: 24,
-  },
-  benefitItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 12,
-  },
-  checkCircle: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255, 162, 127, 0.22)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 2,
-  },
-  checkIcon: {
-    color: colors.accentCoral, // #FFA27F tildes durazno/coral
-    fontSize: 14,
-    fontWeight: '900',
-  },
-  benefitContent: {
-    flex: 1,
-  },
-  benefitTitle: {
-    color: colors.onDark,
-    fontSize: 14,
+  brandTitle: {
+    color: authColors.text,
+    fontSize: 22,
     fontWeight: '800',
-    marginBottom: 2,
-  },
-  benefitDesc: {
-    color: colors.onDarkMuted,
-    fontSize: 12,
-    lineHeight: 17,
-  },
-  quoteBox: {
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(255, 255, 255, 0.12)',
-    paddingTop: 16,
-    marginTop: 6,
-  },
-  quoteText: {
-    color: colors.accentCoral, // #FFA27F
-    fontSize: 12,
-    fontStyle: 'italic',
-    lineHeight: 18,
+    fontFamily: DISPLAY_FONT,
+    letterSpacing: 0.2,
   },
 
-  // ================= PANEL DERECHO / FORMULARIO =================
-  formPanel: {
-    backgroundColor: colors.bg, // #FAF8FF lavanda casi blanco
-    padding: 36,
-  },
-  formPanelWide: {
-    width: '55%',
+  // ================= HERO BANNER =================
+  heroBanner: {
+    height: 118,
+    borderRadius: 20,
+    backgroundColor: '#18162C',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    overflow: 'hidden',
+    position: 'relative',
     justifyContent: 'center',
+    marginBottom: 24,
   },
-  formPanelMobile: {
-    width: '100%',
-    padding: 24,
+  glowWarm: {
+    position: 'absolute',
+    top: -36,
+    left: -18,
+    width: 150,
+    height: 130,
+    borderRadius: 75,
+    backgroundColor: 'rgba(255, 126, 85, 0.24)',
   },
+  glowTeal: {
+    position: 'absolute',
+    bottom: -48,
+    left: 110,
+    width: 140,
+    height: 110,
+    borderRadius: 70,
+    backgroundColor: 'rgba(45, 212, 191, 0.14)',
+  },
+  glowViolet: {
+    position: 'absolute',
+    bottom: -30,
+    right: -20,
+    width: 160,
+    height: 140,
+    borderRadius: 80,
+    backgroundColor: 'rgba(123, 108, 246, 0.30)',
+  },
+  sparkleLeft: {
+    position: 'absolute',
+    left: 38,
+    bottom: 24,
+    color: 'rgba(255, 255, 255, 0.85)',
+    fontSize: 16,
+  },
+  sparkleTop: {
+    position: 'absolute',
+    left: 156,
+    top: 18,
+    color: 'rgba(255, 255, 255, 0.65)',
+    fontSize: 12,
+  },
+  floatingChecklistWrap: {
+    position: 'absolute',
+    right: 26,
+    top: 10,
+  },
+  floatingCheckBadge: {
+    position: 'absolute',
+    top: -6,
+    left: -14,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#6E60F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2,
+    shadowColor: '#6E60F6',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.5,
+    shadowRadius: 6,
+    elevation: 4,
+  },
+  floatingCheckMark: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  miniCard: {
+    width: 104,
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    backgroundColor: '#1E1D33',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.10)',
+    gap: 8,
+  },
+  miniRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  miniDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 3,
+  },
+  miniBar: {
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: 'rgba(255, 255, 255, 0.16)',
+  },
+
+  // ================= TÍTULO Y SUBTÍTULO =================
+  headerBlock: {
+    marginBottom: 20,
+  },
+  heading: {
+    color: authColors.text,
+    fontSize: 28,
+    fontWeight: '800',
+    fontFamily: DISPLAY_FONT,
+    marginBottom: 8,
+    letterSpacing: -0.2,
+  },
+  subtitle: {
+    color: authColors.textSecondary,
+    fontSize: 14,
+    lineHeight: 21,
+  },
+
+  // ================= SEGMENTED CONTROL =================
   tabTrack: {
     flexDirection: 'row',
-    backgroundColor: '#EBE6FA',
+    backgroundColor: authColors.surface,
+    borderWidth: 1,
+    borderColor: authColors.borderSubtle,
+    borderRadius: 14,
     padding: 4,
-    borderRadius: radius.md,
     position: 'relative',
-    marginBottom: 28,
-    alignSelf: 'flex-start',
-    width: 290,
+    marginBottom: 20,
   },
-  tabIndicator: {
+  tabPill: {
     position: 'absolute',
     top: 4,
     left: 4,
-    width: 140,
-    height: 38,
-    borderRadius: radius.sm,
-    backgroundColor: colors.surface,
-    shadowColor: colors.indigoDeep,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 4,
-    elevation: 2,
+    bottom: 4,
+    borderRadius: 11,
+    backgroundColor: authColors.primary,
   },
-  tabBtn: {
-    width: 140,
-    height: 38,
+  tabButton: {
+    flex: 1,
+    minHeight: 42,
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 1,
   },
-  tabBtnText: {
-    fontSize: 13,
+  tabText: {
+    color: authColors.textMuted,
+    fontSize: 14,
     fontWeight: '700',
-    color: colors.textMuted,
   },
-  tabBtnTextActive: {
-    color: colors.primary, // #5B3FD9
-    fontWeight: '900',
+  tabTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '800',
   },
-  formHeader: {
-    marginBottom: 22,
-  },
-  formTitle: {
-    fontSize: 24,
-    fontWeight: '900',
-    color: colors.text,
-    marginBottom: 6,
-  },
-  formSubtitle: {
-    fontSize: 13,
-    color: colors.textMuted,
-    lineHeight: 19,
-  },
+
+  // ================= ALERTAS =================
   errorAlert: {
-    backgroundColor: colors.dangerSoft,
+    backgroundColor: authColors.dangerBg,
+    borderLeftWidth: 3,
+    borderLeftColor: authColors.dangerBorder,
+    borderRadius: 10,
     padding: 12,
-    borderRadius: radius.sm,
-    marginBottom: 16,
-    borderLeftWidth: 4,
-    borderLeftColor: colors.danger,
+    marginBottom: 14,
   },
   errorAlertText: {
-    color: colors.dangerDark,
+    color: authColors.dangerText,
     fontSize: 13,
     fontWeight: '700',
   },
   successAlert: {
-    backgroundColor: colors.successSoft,
+    backgroundColor: authColors.successBg,
+    borderLeftWidth: 3,
+    borderLeftColor: authColors.successBorder,
+    borderRadius: 10,
     padding: 12,
-    borderRadius: radius.sm,
-    marginBottom: 16,
-    borderLeftWidth: 4,
-    borderLeftColor: colors.success,
+    marginBottom: 14,
   },
   successAlertText: {
-    color: colors.success,
+    color: authColors.successText,
     fontSize: 13,
     fontWeight: '700',
   },
-  formFields: {
+
+  // ================= FORMULARIO =================
+  formBlock: {
     width: '100%',
   },
   inputGroup: {
     marginBottom: 16,
   },
-  labelRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'baseline',
-  },
   inputLabel: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: colors.bodyText,
-    marginBottom: 6,
+    color: '#D3CFE6',
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 8,
   },
   textInput: {
-    minHeight: TOUCH,
-    backgroundColor: colors.surface, // blanco puro
+    minHeight: 50,
+    backgroundColor: authColors.inputBg,
     borderWidth: 1.5,
-    borderColor: colors.inputBorder, // borde violeta suave #DDD6FE
-    borderRadius: radius.md,
+    borderColor: authColors.inputBorder,
+    borderRadius: 13,
     paddingHorizontal: 16,
-    fontSize: 14,
-    color: colors.text,
+    fontSize: 15,
+    color: authColors.text,
+  },
+  passwordContainer: {
+    minHeight: 50,
+    backgroundColor: authColors.inputBg,
+    borderWidth: 1.5,
+    borderColor: authColors.inputBorder,
+    borderRadius: 13,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingLeft: 16,
+    paddingRight: 8,
+  },
+  passwordInput: {
+    flex: 1,
+    minHeight: 48,
+    fontSize: 15,
+    color: authColors.text,
+  },
+  eyeButton: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  eyeIcon: {
+    fontSize: 16,
+    color: authColors.textMuted,
   },
   textInputFocused: {
-    borderColor: colors.primary, // #5B3FD9 violeta al enfocar
-    backgroundColor: colors.surface,
+    borderColor: authColors.inputBorderFocus,
   },
-  linkWrap: {
-    paddingVertical: 2,
+
+  // ================= OPCIONES LOGIN =================
+  optionsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 2,
+    marginBottom: 20,
   },
-  inlineLink: {
-    color: colors.primary, // #5B3FD9
+  rememberRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    minHeight: 36,
+  },
+  checkboxBox: {
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.35)',
+    backgroundColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxChecked: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#FFFFFF',
+  },
+  checkboxTick: {
+    color: authColors.bg,
     fontSize: 12,
-    fontWeight: '700',
+    fontWeight: '900',
+    marginTop: -1,
   },
-  linkPressed: {
-    opacity: 0.65,
+  rememberText: {
+    color: '#C9C5DC',
+    fontSize: 13,
+    fontWeight: '600',
   },
+  forgotLink: {
+    color: authColors.primaryLink,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+
+  // ================= BOTÓN PRINCIPAL =================
   submitButton: {
-    minHeight: TOUCH,
-    backgroundColor: colors.primary, // #5B3FD9 violeta
-    borderRadius: radius.md,
+    minHeight: Math.max(TOUCH, 54),
+    backgroundColor: authColors.primary,
+    borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 8,
-    shadowColor: colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.28,
-    shadowRadius: 10,
-    elevation: 4,
+    marginTop: 4,
+    shadowColor: authColors.primary,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 14,
+    elevation: 5,
   },
-  submitButtonDarker: {
-    backgroundColor: colors.primaryDark, // #482EC0 oscurecido al pasar el mouse / presionar
+  submitButtonHover: {
+    backgroundColor: authColors.primaryHover,
+  },
+  submitButtonDisabled: {
+    opacity: 0.65,
   },
   submitButtonText: {
-    color: '#FFFFFF', // blanco con alto contraste
-    fontSize: 15,
-    fontWeight: '900',
-    letterSpacing: 0.3,
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '800',
+    letterSpacing: 0.2,
   },
-  switchRow: {
+
+  // ================= TARJETA MOTIVADORA INFERIOR =================
+  habitCard: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 14,
+    backgroundColor: authColors.surfaceCard,
+    borderWidth: 1,
+    borderColor: authColors.borderSubtle,
+    borderRadius: 16,
+    padding: 16,
+    marginTop: 32,
+  },
+  habitIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 11,
+    backgroundColor: '#1E1C33',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  habitIcon: {
+    fontSize: 18,
+  },
+  habitContent: {
+    flex: 1,
+  },
+  habitEyebrow: {
+    color: authColors.coral,
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 0.9,
+    marginBottom: 4,
+  },
+  habitText: {
+    color: '#B6B2CC',
+    fontSize: 13,
+    lineHeight: 19,
+  },
+
+  // ================= FOOTER =================
+  footerRow: {
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',
     gap: 6,
-    marginTop: 18,
+    marginTop: 22,
   },
-  switchPrompt: {
+  footerPrompt: {
+    color: authColors.textMuted,
     fontSize: 13,
-    color: colors.textMuted,
   },
-  mainLink: {
-    color: colors.primary, // #5B3FD9
+  footerLink: {
+    color: authColors.primaryLink,
     fontSize: 13,
     fontWeight: '800',
   },
-  mainLinkDarker: {
-    color: colors.primaryDark,
+  footerLinkHover: {
     textDecorationLine: 'underline',
   },
-  linkHovered: {
-    opacity: 0.9,
+  guestLinkWrap: {
+    alignSelf: 'center',
+    marginTop: 14,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
   },
-  guestDivider: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    marginVertical: 20,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: colors.border,
-  },
-  dividerText: {
+  guestLinkText: {
+    color: '#6E6A85',
     fontSize: 12,
-    color: colors.textFaint,
     fontWeight: '700',
-  },
-  guestButton: {
-    minHeight: 44,
-    borderWidth: 1.5,
-    borderColor: colors.border,
-    backgroundColor: colors.surface,
-    borderRadius: radius.md,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  guestButtonActive: {
-    backgroundColor: colors.neutralSoft,
-    borderColor: colors.inputBorder,
-  },
-  guestButtonText: {
-    color: colors.primary, // #5B3FD9
-    fontSize: 13,
-    fontWeight: '800',
   },
 });

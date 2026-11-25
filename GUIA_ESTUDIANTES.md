@@ -6,7 +6,7 @@ Aplicar técnicas de debugging y testing a una aplicación existente, sin rehace
 ## Primera exploración (10 minutos)
 - Observar el tablero, el contador, los filtros, las tarjetas y los botones de servicio.
 - Anotar qué debería ocurrir y qué ocurre realmente.
-- Ejecutar `npm test` para obtener una primera línea base.
+- Ejecutar npm test para obtener una primera línea base.
 
 ## Misiones técnicas
 1. Investigar qué sucede con las búsquedas y cuándo la lista se actualiza.
@@ -22,7 +22,7 @@ Aplicar técnicas de debugging y testing a una aplicación existente, sin rehace
 - Pruebas antes/después y commit de cierre.
 
 ## Pautas de evaluación
-Diagnóstico (30), corrección técnica (30), pruebas (20), documentación (15) y explicación oral (5) = **100 puntos**.
+Diagnóstico (30), corrección técnica (30), pruebas (20), documentación (15) y explicación oral (5) = *100 puntos*.
 
 ## Preguntas para la defensa
 - ¿Qué síntoma te hizo sospechar del error?

@@ -20,4 +20,13 @@ describe('filterTasks', () => {
   it('filtra completadas', () => {
     expect(filterTasks(demo, '', 'completadas')).toHaveLength(1);
   });
+  it('separa las tareas archivadas en su propia pestaña', () => {
+    const withArchived: Task[] = [
+      ...demo,
+      { id: '4', title: 'Tarea vieja', description: '', priority: 'baja', completed: true, archived: true },
+    ];
+    expect(filterTasks(withArchived, '', 'todas')).toHaveLength(3);
+    expect(filterTasks(withArchived, '', 'completadas')).toHaveLength(1);
+    expect(filterTasks(withArchived, '', 'archivadas')).toHaveLength(1);
+  });
 });

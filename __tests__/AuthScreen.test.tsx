@@ -2,28 +2,27 @@ import { fireEvent, render, waitFor } from '@testing-library/react-native';
 import { AuthScreen } from '../src/components/AuthScreen';
 
 describe('AuthScreen (Login y Register)', () => {
-  it('muestra el modo Iniciar sesión por defecto con sus textos motivadores', () => {
+  it('muestra el modo Iniciar sesión por defecto con banner, hábito de hoy y controles', () => {
     const { getByText, getByTestId } = render(<AuthScreen />);
 
-    expect(getByText(/TU ESPACIO DE ENFOQUE/)).toBeTruthy();
-    expect(getByText(/Convertí cada día en una victoria personal/)).toBeTruthy();
-    expect(getByText(/Foco total y sin distracciones/)).toBeTruthy();
+    expect(getByText('¡Bienvenido, volviste!')).toBeTruthy();
+    expect(getByText(/Ingresá para seguir con tus victorias diarias/)).toBeTruthy();
+    expect(getByText('HÁBITO DE HOY')).toBeTruthy();
+    expect(getByText('Recordarme')).toBeTruthy();
     expect(getByTestId('auth-email-input')).toBeTruthy();
     expect(getByTestId('auth-password-input')).toBeTruthy();
+    expect(getByTestId('toggle-password-visibility')).toBeTruthy();
     expect(getByTestId('auth-submit-button')).toBeTruthy();
   });
 
-  it('permite alternar a Crear cuenta con textos motivadores y campos de registro', async () => {
-    const { getByText, getByTestId, queryByTestId } = render(<AuthScreen />);
+  it('permite alternar a Crear cuenta con slide, textos motivadores y confirmar contraseña', async () => {
+    const { getByText, getByTestId } = render(<AuthScreen />);
 
-    // Alternar con el botón/tab de registro
     fireEvent.press(getByText('Crear cuenta'));
 
     await waitFor(() => {
-      expect(getByText(/COMIENZO DE TUS METAS/)).toBeTruthy();
-      expect(getByText(/Desbloqueá tu máximo potencial/)).toBeTruthy();
-      expect(getByText(/Diseñado para impulsarte/)).toBeTruthy();
-      expect(getByTestId('register-name-input')).toBeTruthy();
+      expect(getByText('¡Creá tu cuenta gratis!')).toBeTruthy();
+      expect(getByText('TU PRIMER PASO')).toBeTruthy();
       expect(getByTestId('register-confirm-password-input')).toBeTruthy();
     });
   });
@@ -32,7 +31,7 @@ describe('AuthScreen (Login y Register)', () => {
     const { getByTestId, getByText } = render(<AuthScreen />);
 
     fireEvent.press(getByTestId('auth-submit-button'));
-    expect(getByText(/Por favor ingresá tu correo o usuario/)).toBeTruthy();
+    expect(getByText(/Por favor ingresá tu correo electrónico/)).toBeTruthy();
   });
 
   it('permite continuar como invitado o ingresar al gestor', () => {

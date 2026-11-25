@@ -8,11 +8,22 @@ type TaskCardProps = {
   task: Task;
   onToggle: () => void;
   onDelete: () => void;
+  onArchive?: () => void;
+  onUnarchive?: () => void;
+  onOpenDetail?: () => void;
 };
 
-export function TaskCard({ task, onToggle, onDelete }: TaskCardProps) {
+export function TaskCard({
+  task,
+  onToggle,
+  onDelete,
+  onArchive,
+  onUnarchive,
+  onOpenDetail,
+}: TaskCardProps) {
   const [expanded, setExpanded] = useState(false);
   const priority = priorityStyle[task.priority];
+  const isArchived = Boolean(task.archived);
 
   return (
     <View style={styles.card}>
@@ -41,6 +52,11 @@ export function TaskCard({ task, onToggle, onDelete }: TaskCardProps) {
                   {task.completed ? 'Completada' : 'Pendiente'}
                 </Text>
               </View>
+              {isArchived ? (
+                <View style={[styles.pill, styles.pillArchived]}>
+                  <Text style={[styles.pillText, styles.pillArchivedText]}>Archivada</Text>
+                </View>
+              ) : null}
             </View>
           </View>
           <Pressable
@@ -57,15 +73,52 @@ export function TaskCard({ task, onToggle, onDelete }: TaskCardProps) {
         </View>
         {expanded ? (
           <View style={styles.details} testID={`details-${task.id}`}>
-            <Text style={styles.description}>{task.description}</Text>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Eliminar ${task.title}`}
-              onPress={onDelete}
-              style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]}
-            >
-              <Text style={styles.deleteText}>Eliminar tarea</Text>
-            </Pressable>
+            <Text style={styles.description}>
+              {task.description || 'Sin descripción adicional.'}
+            </Text>
+            <View style={styles.actionsRow}>
+              {onOpenDetail ? (
+                <Pressable
+                  testID={`edit-${task.id}`}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Editar ${task.title}`}
+                  onPress={onOpenDetail}
+                  style={({ pressed }) => [styles.editButton, pressed && styles.pressed]}
+                >
+                  <Text style={styles.editText}>✏️ Editar</Text>
+                </Pressable>
+              ) : null}
+              {!isArchived && onArchive ? (
+                <Pressable
+                  testID={`archive-${task.id}`}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Archivar ${task.title}`}
+                  onPress={onArchive}
+                  style={({ pressed }) => [styles.archiveButton, pressed && styles.pressed]}
+                >
+                  <Text style={styles.archiveText}>📦 Archivar</Text>
+                </Pressable>
+              ) : null}
+              {isArchived && onUnarchive ? (
+                <Pressable
+                  testID={`unarchive-${task.id}`}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Desarchivar ${task.title}`}
+                  onPress={onUnarchive}
+                  style={({ pressed }) => [styles.archiveButton, pressed && styles.pressed]}
+                >
+                  <Text style={styles.archiveText}>↩ Desarchivar</Text>
+                </Pressable>
+              ) : null}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={`Eliminar ${task.title}`}
+                onPress={onDelete}
+                style={({ pressed }) => [styles.deleteButton, pressed && styles.pressed]}
+              >
+                <Text style={styles.deleteText}>Eliminar tarea</Text>
+              </Pressable>
+            </View>
           </View>
         ) : null}
       </View>
@@ -110,6 +163,8 @@ const styles = StyleSheet.create({
   pill: { paddingHorizontal: 9, paddingVertical: 3, borderRadius: 20 },
   pillPending: { backgroundColor: colors.neutralSoft },
   pillDone: { backgroundColor: colors.successSoft },
+  pillArchived: { backgroundColor: colors.warningSoft },
+  pillArchivedText: { color: colors.warning },
   pillText: { fontSize: 11, fontWeight: '700' },
   expandButton: {
     width: 36,
@@ -122,9 +177,22 @@ const styles = StyleSheet.create({
   expandText: { color: colors.primaryDark, fontWeight: '800', fontSize: 20 },
   details: { marginTop: 14, paddingTop: 12, borderTopWidth: 1, borderTopColor: colors.border },
   description: { fontSize: 14, color: colors.bodyText, lineHeight: 21 },
+  actionsRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 14 },
+  editButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 13,
+    backgroundColor: colors.primarySoft,
+    borderRadius: radius.sm,
+  },
+  editText: { color: colors.primaryDark, fontSize: 13, fontWeight: '800' },
+  archiveButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 13,
+    backgroundColor: colors.neutralSoft,
+    borderRadius: radius.sm,
+  },
+  archiveText: { color: colors.bodyText, fontSize: 13, fontWeight: '800' },
   deleteButton: {
-    alignSelf: 'flex-start',
-    marginTop: 14,
     paddingVertical: 10,
     paddingHorizontal: 14,
     backgroundColor: colors.dangerSoft,

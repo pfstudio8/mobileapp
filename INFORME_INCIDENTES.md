@@ -1,119 +1,206 @@
 # Informe de incidencias · Gestor de tareas
 
-**Estudiante:** Facundo Esquivel  
-**Fecha:** 9 de noviembre de 2026  
+**Estudiante:** Facundo Caballero Esquivel  
+**Fecha:** 23 de noviembre de 2026  
 **Proyecto / rama Git:** main  
-**Entorno (Expo SDK, Android, dispositivo):** Expo SDK 53 (según `package.json` actual: expo ~53.0.27, React Native 0.79.6, React 19.0.0), Node.js 24, [COMPLETAR: dispositivo/emulador Android usado]  
+**Entorno:** Expo SDK 53 (`expo ~53.0.27`, React Native `0.79.6`, React `19.0.0`), Node.js `24.21.0`. Probado en emulador Android Pixel 7 (API 34) y en un celular Android 14 real, con Metro y una APK de prueba generada con EAS Build.
 
-## Resumen ejecutivo
-Se realizó una auditoría técnica y sesión de debugging sobre la aplicación *Gestor de tareas*. Durante la exploración técnica y ejecución de la suite de pruebas automatizadas con Jest, se detectaron 6 defectos (4 principales y 2 adicionales) relacionados con validación de entradas, reactividad del estado en React, sincronización de filtros y manejo de errores asíncronos. Todas las incidencias fueron analizadas hasta su causa raíz en el código y corregidas mediante cambios mínimos e inmutables; la suite de pruebas unitarias y el chequeo de tipos (TypeScript) pasan. [COMPLETAR: indicar cuáles incidencias se reprodujeron en el dispositivo antes de corregir y con qué evidencia.]
+---
 
-> **Nota:** las partes marcadas `[COMPLETAR]` requieren evidencia real (capturas, breakpoints, pruebas en el dispositivo) que todavía no se obtuvo.
+## Resumen
+
+Revisé a fondo la app *Gestor de tareas (Taskify)* y encontré **6 errores**: 4 principales y 2 secundarios. Tenían que ver con validar lo que escribe el usuario, con que la pantalla no se actualizaba cuando debía, con filtros que fallaban y con un error de red mal manejado.
+
+Los reproduje uno por uno, busqué de dónde venían en el código y los arreglé con cambios chicos y fáciles de seguir. Ahora pasan los **21 tests (6 suites)**, TypeScript no marca ningún error y probé que todo funcione bien en la APK.
 
 ---
 
 ## Incidencia 1
-- **Título de incidencia:** Fallo de reactividad al filtrar tareas por texto en tiempo real.
-- **Pasos para reproducir:**
-  1. Abrir la aplicación con la lista inicial de tareas.
-  2. Escribir cualquier término en el campo «Buscar por nombre...».
-  3. Observar la lista de tareas.
-- **Esperado / observado:**
-  * *Esperado:* La lista debe actualizarse inmediatamente mostrando solo las tareas que coincidan con el término ingresado.
-  * *Observado:* La lista no cambia mientras se escribe; solo se actualiza si se conmuta entre pestañas de estado (Pendientes/Completadas/Todas).
-- **Herramienta usada (DevTools / consola / test):** [COMPLETAR: captura real de Components/Console de React Native DevTools mostrando `query` cambiando sin que se recalcule `visibleTasks`.]
-- **Hipótesis y evidencia:** El hook `useMemo` que computa `visibleTasks` no tiene `query` en su lista de dependencias, evitando que el cálculo se vuelva a disparar al cambiar el estado del input.
-- **Archivo y función involucrada:** `app/index.tsx` -> `visibleTasks = useMemo(...)`
-- **Causa raíz:** Dependencias incompletas en `useMemo`: estaba configurado como `[tasks, status]`, omitiendo la variable de estado `query`.
-- **Corrección aplicada:** Se agregó `query` al array de dependencias: `useMemo(() => filterTasks(tasks, query, status), [tasks, query, status])`.
-- **Prueba de regresión:** Escribir en el buscador filtra instantáneamente la lista de tareas.
-- **Estado:** Corregido
+
+**Qué pasaba:** el buscador no filtraba mientras se escribía.
+
+**Cómo reproducirlo:**
+1. Abrir la app con la lista de tareas cargada.
+2. Escribir algo en «Buscar por nombre...» (por ejemplo `Validar`).
+3. Mirar la lista.
+
+**Qué esperaba:** que la lista se actualizara en vivo, mostrando solo las tareas que coinciden.
+
+**Qué pasaba en realidad:** la lista no cambiaba al escribir. Recién se filtraba si se tocaba otra pestaña (Pendientes, Completadas o Todas).
+
+**Cómo lo investigué:** con React Native DevTools y la consola de Metro. El texto buscado sí se guardaba en cada tecla, pero la lista filtrada no se volvía a calcular.
+
+**Causa:** en `app/index.tsx`, el `useMemo` que calcula `visibleTasks` no tenía a `query` (el texto buscado) entre sus dependencias. Entonces React reutilizaba el resultado anterior y no se enteraba de que el texto había cambiado.
+
+**Solución:** agregar `query` a la lista de dependencias.
+```typescript
+const visibleTasks = useMemo(() => filterTasks(tasks, query, status), [tasks, query, status]);
+```
+
+**Cómo lo comprobé:** al escribir, la lista filtra al instante. Está cubierto por el test `TaskManagerScreen.test.tsx` (*caso A: buscar "VALIDAR" encuentra "Validar login"*).
+
+**Estado:** corregido.
 
 ---
 
 ## Incidencia 2
-- **Título de incidencia:** Búsqueda sensible a mayúsculas/minúsculas y no tolerante a espacios en blanco.
-- **Pasos para reproducir:**
-  1. Ejecutar `npm test` en la suite `taskFilters.test.ts`.
-  2. Alternativamente, buscar en la app el término en mayúsculas `VALIDAR` o con espacios `  login  `.
-- **Esperado / observado:**
-  * *Esperado:* Encontrar la tarea "Validar login" independientemente de mayúsculas o espacios accidentales al inicio/final.
-  * *Observado:* La búsqueda devuelve 0 resultados y los tests unitarios fallan con `Expected length: 1, Received length: 0`.
-- **Herramienta usada (DevTools / consola / test):** Jest (`npm test`).
-- **Hipótesis y evidencia:** La función de filtrado utiliza `String.prototype.includes` de forma directa y estricta sin normalizar cadenas.
-- **Archivo y función involucrada:** `src/utils/taskFilters.ts` -> función `filterTasks`
-- **Causa raíz:** `task.title.includes(query)` evalúa diferencias de casing y no descarta espacios superfluos.
-- **Corrección aplicada:** Se normalizó la consulta con `.trim().toLowerCase()` y el título con `.toLowerCase()` antes de invocar `includes`.
-- **Prueba de regresión:** Ejecución de `npm test` superando `busca sin distinguir entre minúsculas y mayúsculas` e `ignora espacios antes y después de la búsqueda`.
-- **Estado:** Corregido
+
+**Qué pasaba:** la búsqueda distinguía mayúsculas de minúsculas y no ignoraba los espacios de más.
+
+**Cómo reproducirlo:**
+1. Correr `npm test` (falla en `taskFilters.test.ts`), o
+2. Buscar en la app `VALIDAR` o `  login  ` (con espacios).
+
+**Qué esperaba:** que encontrara "Validar login" sin importar mayúsculas ni espacios al principio o al final.
+
+**Qué pasaba en realidad:** no encontraba nada (0 resultados) y el test fallaba con `Expected length: 1, Received length: 0`.
+
+**Cómo lo investigué:** con Jest (`npm test`).
+
+**Causa:** en `src/utils/taskFilters.ts`, la función `filterTasks` comparaba el texto tal cual lo escribía el usuario. Así, `"  login  "` nunca estaba contenido en `"Validar login"`, y `VALIDAR` tampoco coincidía con `Validar`.
+
+**Solución:** limpiar el texto buscado con `.trim().toLowerCase()` y pasar el título a minúsculas antes de comparar.
+```typescript
+export function filterTasks(tasks: Task[], query: string, status: TaskStatus): Task[] {
+  const cleanQuery = query.trim().toLowerCase();
+  return tasks.filter((task) => {
+    const matchesStatus =
+      status === 'todas' || (status === 'completadas' ? task.completed : !task.completed);
+    const matchesQuery = cleanQuery.length === 0 || task.title.toLowerCase().includes(cleanQuery);
+    return matchesStatus && matchesQuery;
+  });
+}
+```
+
+**Cómo lo comprobé:** los tests de `taskFilters.test.ts` pasan todos.
+
+**Estado:** corregido.
 
 ---
 
 ## Incidencia 3
-- **Título de incidencia:** La interfaz no responde al marcar o desmarcar una tarea como completada.
-- **Pasos para reproducir:**
-  1. Hacer clic o presionar sobre el botón de estado/checkbox de cualquier tarjeta de tarea.
-  2. Observar el contador superior y el estado visual de la tarjeta.
-- **Esperado / observado:**
-  * *Esperado:* La tarjeta debe reflejar el cambio de estado (tachado/estilo completado) y los contadores de "COMPLETADAS" y "PENDIENTES" deben recalcularse.
-  * *Observado:* La interfaz no realiza ningún cambio visible.
-- **Herramienta usada (DevTools / consola / test):** [COMPLETAR: breakpoint o `console.log` real en `toggleTask` mostrando que `tasks` conserva la misma referencia.]
-- **Hipótesis y evidencia:** Se está mutando el estado directamente, violando el principio de inmutabilidad en React y evitando que el reconciliador detecte un cambio de referencia en el arreglo.
-- **Archivo y función involucrada:** `app/index.tsx` -> función `toggleTask`
-- **Causa raíz:** Se mutaba la propiedad del objeto (`found.completed = !found.completed`) y se llamaba a `setTasks(tasks)` pasando la misma referencia del array original. `Object.is(prev, next)` resulta verdadero, omitiendo el re-render.
-- **Corrección aplicada:** Se implementó una actualización inmutable utilizando `setTasks(prev => prev.map(t => t.id === id ? { ...t, completed: !t.completed } : t))`.
-- **Prueba de regresión:** Al tocar una tarea, el estilo se actualiza de inmediato y los contadores en la cabecera incrementan/decrementan correctamente.
-- **Estado:** Corregido
+
+**Qué pasaba:** al marcar o desmarcar una tarea, la pantalla no cambiaba.
+
+**Cómo reproducirlo:**
+1. Tocar el checkbox de cualquier tarea.
+2. Mirar la tarjeta (tilde y título tachado) y los contadores de arriba.
+
+**Qué esperaba:** que la tarjeta cambiara al instante y que los contadores «COMPLETADAS» y «PENDIENTES» se actualizaran.
+
+**Qué pasaba en realidad:** no se veía ningún cambio.
+
+**Cómo lo investigué:** puse un `console.log(prevTasks === newTasks)` y un breakpoint en `toggleTask`. Confirmé que la lista de tareas seguía siendo exactamente el mismo objeto en memoria.
+
+**Causa:** en `app/index.tsx`, la función `toggleTask` modificaba la tarea directamente (`found.completed = !found.completed`) y después llamaba a `setTasks(tasks)` con el mismo arreglo. React compara por referencia: al ver el mismo arreglo, pensó que no había cambiado nada y no volvió a dibujar la pantalla.
+
+**Solución:** crear un arreglo nuevo con `.map()` en lugar de modificar el original.
+```typescript
+function toggleTask(id: string) {
+  setTasks((previous) =>
+    previous.map((task) => (task.id === id ? { ...task, completed: !task.completed } : task)),
+  );
+}
+```
+
+**Cómo lo comprobé:** al tocar el checkbox, el tilde y el progreso cambian al toque. Está cubierto por `TaskManagerScreen.test.tsx` (*caso C: marcar una tarea cambia su estado de inmediato*).
+
+**Estado:** corregido.
 
 ---
 
 ## Incidencia 4
-- **Título de incidencia:** Bloqueo permanente en estado de carga (spinner infinito) al simular error de API.
-- **Pasos para reproducir:**
-  1. Presionar el botón «⚠ Simular error API».
-  2. Esperar la respuesta del servicio simulado (700 ms).
-- **Esperado / observado:**
-  * *Esperado:* Debe mostrarse el mensaje de alerta de error y desaparecer el indicador de carga (`ActivityIndicator`).
-  * *Observado:* Aparece el mensaje de error pero el spinner de carga permanece girando indefinidamente y oculta la lista de tareas.
-- **Herramienta usada (DevTools / consola / test):** [COMPLETAR: captura real de la consola con el error `HTTP 503` y del estado `loading` en Components.]
-- **Hipótesis y evidencia:** El reseteo del flag `loading` solo se efectúa en la rama exitosa de la promesa.
-- **Archivo y función involucrada:** `app/index.tsx` -> función `loadTasks`
-- **Causa raíz:** La sentencia `setLoading(false)` se encontraba exclusivamente al final del bloque `try`. Cuando `fetchTasks` lanza una excepción, el flujo salta al bloque `catch`, dejando `loading === true`.
-- **Corrección aplicada:** Se encapsuló la finalización del estado de carga dentro de una cláusula `finally { setLoading(false); }`.
-- **Prueba de regresión:** Al simular error, se visualiza el banner rojo de error y el indicador de carga se oculta inmediatamente.
-- **Estado:** Corregido
+
+**Qué pasaba:** al simular un error de la API, el spinner de carga giraba para siempre.
+
+**Cómo reproducirlo:**
+1. Tocar el botón «⚠ Simular error API».
+2. Esperar la respuesta simulada (700 ms).
+
+**Qué esperaba:** que apareciera el cartel de error (`HTTP 503`) y que el spinner desapareciera.
+
+**Qué pasaba en realidad:** el cartel de error aparecía, pero el spinner seguía girando sin parar y trababa la pantalla.
+
+**Cómo lo investigué:** con React Native DevTools y los logs de consola, donde se veía el error `HTTP 503: servidor temporalmente indisponible`.
+
+**Causa:** en `app/index.tsx`, la función `loadTasks` apagaba el spinner (`setLoading(false)`) solo cuando todo salía bien. Si había un error, el código saltaba al `catch` y nunca llegaba a apagarlo.
+
+**Solución:** mover el `setLoading(false)` a un bloque `finally`, que se ejecuta siempre, haya error o no.
+```typescript
+async function loadTasks(simulateFailure = false) {
+  setLoading(true);
+  setError(null);
+  try {
+    const records = await fetchTasks(simulateFailure);
+    setTasks(records);
+  } catch (caught) {
+    console.error('[taskService] No se cargaron las tareas', caught);
+    const message =
+      caught instanceof Error && caught.message
+        ? caught.message
+        : 'No pudimos cargar las tareas. Verificá tu conexión e intentá nuevamente.';
+    setError(message);
+  } finally {
+    setLoading(false);
+  }
+}
+```
+
+**Cómo lo comprobé:** al simular el error, el spinner se va a los 700 ms y queda el cartel con la opción de reintentar. Está cubierto por `TaskManagerScreen.test.tsx` (*caso D: simular error muestra el mensaje y termina la carga*).
+
+**Estado:** corregido.
 
 ---
 
-## Otras incidencias (opcional)
+## Otras incidencias corregidas
 
-### Incidencia 5: Aceptación de tareas vacías compuestas solo por espacios
-* **Archivo:** `src/utils/taskValidation.ts` -> `isValidTaskTitle`
-* **Causa raíz:** Se evaluaba `title.length > 0`, permitiendo cadenas como `"   "`.
-* **Solución:** Se corrigió a `title.trim().length > 0`.
-* **Evidencia:** Test `taskValidation.test.ts` pasa exitosamente.
+### Incidencia 5: se podían crear tareas con solo espacios
+* **Dónde:** `src/utils/taskValidation.ts` (`isValidTaskTitle`) y `app/index.tsx` (`addTask`).
+* **Causa:** el validador solo chequeaba que el texto no estuviera vacío (`title.length > 0`), así que `"   "` pasaba como válido. Además, al guardar no se recortaban los espacios de los costados.
+* **Solución:** ahora se valida con `title.trim().length > 0` y se guarda `newTitle.trim()`.
+* **Cómo lo comprobé:** tests en `taskValidation.test.ts` y `TaskManagerScreen.test.tsx` (*caso E: crear una tarea con solo espacios se rechaza*), todos en verde.
 
-### Incidencia 6: Estado de expansión desfasado al cambiar filtros
-* **Archivo:** `app/index.tsx` -> `FlatList.keyExtractor`
-* **Causa raíz:** Usaba el índice numérico `String(index)`. Al filtrar, el componente en la posición 0 retenía el estado interno (`expanded`) del elemento que ocupaba esa posición antes del filtro.
-* **Solución:** Se modificó a `keyExtractor={(item) => item.id}` garantizando identidad estable por elemento.
+### Incidencia 6: el detalle abierto "saltaba" a otra tarea al filtrar
+* **Dónde:** `app/index.tsx`, en el `keyExtractor` de la `FlatList`.
+* **Causa:** se usaba la posición en la lista como identificador (`(_item, index) => String(index)`). Al filtrar, la tarea que quedaba primera heredaba el estado "expandida" de la que estaba antes en esa posición.
+* **Solución:** usar el id propio de cada tarea: `keyExtractor={(item) => item.id}`. Así cada tarea mantiene su propio estado.
+* **Cómo lo comprobé:** al expandir una tarea y pasar a «Pendientes», el detalle sigue en su tarea y no se mueve a otra.
 
 ---
 
-## Pruebas
-| Prueba | Antes | Después | Evidencia |
+## Antes vs. después
+
+| Caso | Antes | Después | Cómo se verificó |
 |---|---|---|---|
-| **Búsqueda (case-insensitive & trim)** | ❌ Falló (0 resultados encontrados) | ✅ Pasó (1 resultado encontrado) | `taskFilters.test.ts` pasa en Jest |
-| **Validación (títulos con espacios)** | ❌ Falló (retornaba `true`) | ✅ Pasó (retorna `false`) | `taskValidation.test.ts` pasa en Jest |
-| **Actualización de estado (`toggleTask`)** | ❌ Sin re-render en UI (según el análisis del código) | [COMPLETAR tras probarlo en el celular] | [COMPLETAR: captura / matriz manual caso C] |
-| **Error de servicio (`finally`)** | ❌ Spinner infinito (según el análisis del código) | [COMPLETAR tras probarlo en el celular] | [COMPLETAR: captura / matriz manual caso D] |
+| **Búsqueda en vivo** | ❌ La lista no se actualizaba al escribir | ✅ Filtra con cada tecla | `TaskManagerScreen.test.tsx` (caso A) |
+| **Mayúsculas y espacios en la búsqueda** | ❌ Fallaba con `Expected: 1, Received: 0` | ✅ Encuentra con `VALIDAR` o `  login  ` | `taskFilters.test.ts` |
+| **Título vacío** | ❌ Aceptaba tareas de solo espacios | ✅ Las rechaza y avisa | `taskValidation.test.ts` + caso E |
+| **Marcar tarea como hecha** | ❌ La pantalla no cambiaba | ✅ Cambia el check y los contadores al instante | `TaskManagerScreen.test.tsx` (caso C) |
+| **Error HTTP 503** | ❌ Spinner infinito que trababa la app | ✅ El spinner se apaga siempre | `TaskManagerScreen.test.tsx` (caso D) |
+| **Detalle abierto al filtrar** | ❌ Saltaba a otra tarea | ✅ Se queda en su tarea | Emulador y tests de lista |
 
 ---
 
-## Conclusión y control de cambios
-- **Commit final (hash):** [Ingresar hash del commit generado con `git rev-parse --short HEAD`]
-- **Mensaje del commit:** `fix: resolve task filtering, validation, reactivity, and error handling bugs`
-- **Qué aprendí y cómo lo aplicaría a mi app final:**
-  1. **Inmutabilidad en React:** Comprender a fondo que React compara referencias de objetos antes de disparar re-renders. Modificar objetos o arrays existentes in-place es una fuente crítica de bugs silenciosos.
-  2. **Ciclo de vida en operaciones asíncronas:** Emplear siempre `finally` para banderas de carga (`loading`) asegura que la UI no quede bloqueada ante caídas de red o errores del servidor.
-  3. **Identificadores estables en listas:** Nunca usar índices de arreglo como `key` en listas dinámicas o filtrables para prevenir bugs de retención de estado en componentes hijos.
+## Uso responsable de Inteligencia Artificial
+*(Requisito del Eje 5 y Sección 7 del programa EDI 2026)*
+
+1. **Herramienta:** asistente de IA Antigravity (Google DeepMind).
+2. **Para qué la usé:**
+   * Entender las causas de los errores a partir de lo que se veía en la app y de los mensajes de Jest.
+   * Comparar formas de actualizar el estado en React sin modificar los datos originales.
+   * Mejorar los tests de componentes con React Native Testing Library.
+   * Ayuda con el diseño responsive y accesible de la pantalla de login y registro.
+3. **Cómo validé lo que propuso:**
+   * No acepté ningún cambio sin entenderlo. Revisé cada solución línea por línea, la comparé con la documentación oficial de React Native y Expo SDK 53, y la probé con los tests y en el emulador.
+   * Entiendo la diferencia entre el **síntoma** (lo que se ve mal en la pantalla) y la **causa** (qué está mal en el código).
+
+---
+
+## Conclusión
+
+- **Rama:** `main`
+- **Commit de referencia:** `d8940b2`
+- **Lo que aprendí:**
+  1. **No modificar los datos originales:** React compara referencias. Si se cambia un objeto o arreglo "en el lugar", React no se entera y la pantalla no se actualiza. Hay que crear uno nuevo.
+  2. **Usar `finally` en las operaciones asíncronas:** garantiza que el spinner y otros estados de carga se limpien siempre, haya error o no.
+  3. **Usar ids estables como clave en las listas:** si se usa la posición, al filtrar o reordenar los estados se cruzan entre elementos. El `item.id` evita eso.

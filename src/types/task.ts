@@ -1,5 +1,5 @@
 export type TaskPriority = 'alta' | 'media' | 'baja';
-export type TaskStatus = 'todas' | 'pendientes' | 'completadas';
+export type TaskStatus = 'todas' | 'pendientes' | 'completadas' | 'archivadas';
 
 export type Task = {
   id: string;
@@ -7,4 +7,5 @@ export type Task = {
   description: string;
   priority: TaskPriority;
   completed: boolean;
+  archived?: boolean;
 };

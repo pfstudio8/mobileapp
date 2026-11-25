@@ -8,7 +8,9 @@
     "userInterfaceStyle": "light",
     "backgroundColor": "#FAF8FF",
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-secure-store",
+      "expo-font"
     ],
     "android": {
       "package": "com.instituto.gestortareastaller"

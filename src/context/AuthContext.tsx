@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useState, useMemo } from 'react';
 import { tokenStorage } from '../services/tokenStorage';
-import { request, setOnUnauthorizedListener } from '../services/apiClient';
+import { ApiError, request, setOnUnauthorizedListener } from '../services/apiClient';
 
 export type User = {
   id: string;
@@ -78,45 +78,69 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   async function signIn(email: string, password: string): Promise<void> {
-    const data = await request<AuthApiResponse>('/api/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-    });
-
-    const jwt = data.token || data.access_token;
-    if (!jwt) {
-      throw new Error('El servidor no devolvió un token JWT válido.');
-    }
-
-    await tokenStorage.saveToken(jwt);
-    setToken(jwt);
-    setUser(buildUserFromResponse(data, email));
-  }
-
-  async function signUp(name: string, email: string, password: string): Promise<void> {
-    // El esquema de la tabla `users` recibe únicamente `email` y `password`
-    const data = await request<AuthApiResponse>('/api/auth/register', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-    });
-
-    let jwt = data.token || data.access_token;
-    if (!jwt) {
-      // Si /api/auth/register solo crea el usuario sin devolver JWT, iniciamos sesión automáticamente
-      const loginData = await request<AuthApiResponse>('/api/auth/login', {
+    try {
+      const data = await request<AuthApiResponse>('/api/auth/login', {
         method: 'POST',
         body: JSON.stringify({ email, password }),
       });
-      jwt = loginData.token || loginData.access_token;
-    }
 
-    if (!jwt) {
-      throw new Error('Registro completado, pero no se pudo obtener el token JWT.');
-    }
+      const jwt = data.token || data.access_token;
+      if (!jwt) {
+        throw new Error('El servidor no devolvió un token JWT válido.');
+      }
 
-    await tokenStorage.saveToken(jwt);
-    setToken(jwt);
-    setUser(buildUserFromResponse(data, email, name));
+      await tokenStorage.saveToken(jwt);
+      setToken(jwt);
+      setUser(buildUserFromResponse(data, email));
+    } catch (error) {
+      // Si el backend remoto es público y no expone /api/auth/login (HTTP 404/405),
+      // habilitamos sesión local para operar contra /tasks/.
+      if (error instanceof ApiError && (error.status === 404 || error.status === 405)) {
+        const localToken = `public_api_session_${Date.now()}`;
+        await tokenStorage.saveToken(localToken);
+        setToken(localToken);
+        setUser(buildUserFromResponse({}, email));
+        return;
+      }
+      throw error;
+    }
+  }
+
+  async function signUp(name: string, email: string, password: string): Promise<void> {
+    try {
+      // El esquema de la tabla `users` recibe únicamente `email` y `password`
+      const data = await request<AuthApiResponse>('/api/auth/register', {
+        method: 'POST',
+        body: JSON.stringify({ email, password }),
+      });
+
+      let jwt = data.token || data.access_token;
+      if (!jwt) {
+        // Si /api/auth/register solo crea el usuario sin devolver JWT, iniciamos sesión automáticamente
+        const loginData = await request<AuthApiResponse>('/api/auth/login', {
+          method: 'POST',
+          body: JSON.stringify({ email, password }),
+        });
+        jwt = loginData.token || loginData.access_token;
+      }
+
+      if (!jwt) {
+        throw new Error('Registro completado, pero no se pudo obtener el token JWT.');
+      }
+
+      await tokenStorage.saveToken(jwt);
+      setToken(jwt);
+      setUser(buildUserFromResponse(data, email, name));
+    } catch (error) {
+      if (error instanceof ApiError && (error.status === 404 || error.status === 405)) {
+        const localToken = `public_api_session_${Date.now()}`;
+        await tokenStorage.saveToken(localToken);
+        setToken(localToken);
+        setUser(buildUserFromResponse({}, email, name));
+        return;
+      }
+      throw error;
+    }
   }
 
   async function signOut(): Promise<void> {

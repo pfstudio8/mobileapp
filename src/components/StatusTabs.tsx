@@ -7,6 +7,7 @@ const options: { key: TaskStatus; label: string }[] = [
   { key: 'todas', label: 'Todas' },
   { key: 'pendientes', label: 'Pendientes' },
   { key: 'completadas', label: 'Completadas' },
+  { key: 'archivadas', label: 'Archivadas' },
 ];
 
 type Props = {
@@ -71,9 +72,9 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
   },
   pressed: { backgroundColor: colors.neutralPressed },
-  text: { color: colors.textMuted, fontWeight: '700', fontSize: 12 },
+  text: { color: colors.textMuted, fontWeight: '700', fontSize: 11 },
   textActive: { color: colors.dark },
-  badge: { minWidth: 20, paddingHorizontal: 6, paddingVertical: 1, borderRadius: 10, backgroundColor: colors.neutralChip, alignItems: 'center' },
+  badge: { minWidth: 18, paddingHorizontal: 5, paddingVertical: 1, borderRadius: 10, backgroundColor: colors.neutralChip, alignItems: 'center' },
   badgeActive: { backgroundColor: colors.primarySoft },
   badgeText: { fontSize: 10, fontWeight: '800', color: colors.textMuted },
   badgeTextActive: { color: colors.primaryDark },

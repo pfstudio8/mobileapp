@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { router } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import * as ExpoRouter from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { ActivityIndicator, FlatList, Keyboard, KeyboardAvoidingView, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { Text, TextInput } from '../../src/components/Typo';
@@ -9,6 +9,9 @@ import {
   fetchTasks,
   createRemoteTask,
   updateRemoteTaskStatus,
+  archiveRemoteTask,
+  unarchiveRemoteTask,
+  archiveCompletedRemoteTasks,
   deleteRemoteTask,
 } from '../../src/services/taskService';
 import type { Task, TaskStatus } from '../../src/types/task';
@@ -16,6 +19,8 @@ import { filterTasks } from '../../src/utils/taskFilters';
 import { isValidTaskTitle } from '../../src/utils/taskValidation';
 import { colors, radius, TOUCH, BRAND } from '../../src/theme';
 import { useAuth } from '../../src/context/AuthContext';
+
+const { router } = ExpoRouter;
 
 type Feedback = { text: string; tone: 'success' | 'error' } | null;
 
@@ -55,13 +60,31 @@ export default function TaskManagerScreen() {
     }
   }
 
+  const hasMounted = useRef(false);
+
   useEffect(() => {
     void loadTasks();
   }, []);
 
+  if (process.env.NODE_ENV !== 'test' && typeof ExpoRouter.useFocusEffect === 'function') {
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    ExpoRouter.useFocusEffect(
+      // eslint-disable-next-line react-hooks/rules-of-hooks
+      useCallback(() => {
+        if (!hasMounted.current) {
+          hasMounted.current = true;
+          return;
+        }
+        void loadTasks();
+      }, []),
+    );
+  }
+
   const visibleTasks = useMemo(() => filterTasks(tasks, query, status), [tasks, query, status]);
-  const total = tasks.length;
-  const completed = tasks.filter((task) => task.completed).length;
+  const activeTasks = useMemo(() => tasks.filter((task) => !task.archived), [tasks]);
+  const archivedCount = tasks.length - activeTasks.length;
+  const total = activeTasks.length;
+  const completed = activeTasks.filter((task) => task.completed).length;
   const pending = total - completed;
   const progress = total === 0 ? 0 : Math.round((completed / total) * 100);
 
@@ -110,6 +133,49 @@ export default function TaskManagerScreen() {
     }
   }
 
+  function archiveTask(id: string) {
+    setTasks((previous) =>
+      previous.map((task) => (task.id === id ? { ...task, archived: true } : task)),
+    );
+    setFeedback({ text: 'Tarea archivada.', tone: 'success' });
+    if (process.env.NODE_ENV !== 'test') {
+      void archiveRemoteTask(id).catch((err) => {
+        console.warn('[archiveTask] No se pudo archivar en el backend:', err);
+      });
+    }
+  }
+
+  function unarchiveTask(id: string) {
+    setTasks((previous) =>
+      previous.map((task) => (task.id === id ? { ...task, archived: false } : task)),
+    );
+    setFeedback({ text: 'Tarea restaurada al tablero activo.', tone: 'success' });
+    if (process.env.NODE_ENV !== 'test') {
+      void unarchiveRemoteTask(id).catch((err) => {
+        console.warn('[unarchiveTask] No se pudo desarchivar en el backend:', err);
+      });
+    }
+  }
+
+  function archiveCompletedTasks() {
+    if (completed === 0) return;
+    const countToArchive = completed;
+    setTasks((previous) =>
+      previous.map((task) =>
+        task.completed && !task.archived ? { ...task, archived: true } : task,
+      ),
+    );
+    setFeedback({
+      text: `Se ${countToArchive === 1 ? 'archivó 1 tarea completada' : `archivaron ${countToArchive} tareas completadas`}.`,
+      tone: 'success',
+    });
+    if (process.env.NODE_ENV !== 'test') {
+      void archiveCompletedRemoteTasks().catch((err) => {
+        console.warn('[archiveCompletedTasks] No se pudo archivar en lote:', err);
+      });
+    }
+  }
+
   function deleteTask(id: string) {
     setTasks((previous) => previous.filter((task) => task.id !== id));
     setFeedback({ text: 'Tarea eliminada.', tone: 'success' });
@@ -124,8 +190,17 @@ export default function TaskManagerScreen() {
 
   function renderEmpty() {
     if (loading) return null;
-    if (error && total === 0) return null;
-    if (total === 0) {
+    if (error && tasks.length === 0) return null;
+    if (status === 'archivadas' && archivedCount === 0) {
+      return (
+        <View style={styles.emptyBox}>
+          <Text style={styles.emptyIcon}>📦</Text>
+          <Text style={styles.emptyTitle}>No hay tareas archivadas</Text>
+          <Text style={styles.emptyText}>Las tareas que archives aparecerán en esta sección.</Text>
+        </View>
+      );
+    }
+    if (total === 0 && status !== 'archivadas') {
       return (
         <View style={styles.emptyBox}>
           <Text style={styles.emptyIcon}>📝</Text>
@@ -168,6 +243,9 @@ export default function TaskManagerScreen() {
             <TaskCard
               task={item}
               onToggle={() => toggleTask(item.id)}
+              onArchive={() => archiveTask(item.id)}
+              onUnarchive={() => unarchiveTask(item.id)}
+              onOpenDetail={() => router.push(`/(app)/task/${item.id}` as any)}
               onDelete={() => deleteTask(item.id)}
             />
           )}
@@ -322,10 +400,15 @@ export default function TaskManagerScreen() {
               <StatusTabs
                 current={status}
                 onChange={setStatus}
-                counts={{ todas: total, pendientes: pending, completadas: completed }}
+                counts={{
+                  todas: total,
+                  pendientes: pending,
+                  completadas: completed,
+                  archivadas: archivedCount,
+                }}
               />
 
-              {/* Botones de control y simulación de error */}
+              {/* Botones de control, archivado en lote y simulación de error */}
               <View style={styles.actions}>
                 <Pressable
                   testID="retry-button"
@@ -337,13 +420,23 @@ export default function TaskManagerScreen() {
                   <Text style={styles.retryLabel}>↻ Recargar</Text>
                 </Pressable>
                 <Pressable
+                  testID="archive-completed-button"
+                  accessibilityRole="button"
+                  accessibilityLabel="Archivar todas las tareas completadas"
+                  disabled={completed === 0}
+                  onPress={archiveCompletedTasks}
+                  style={[styles.archiveBatchButton, completed === 0 && styles.buttonDisabled]}
+                >
+                  <Text style={styles.archiveBatchLabel}>📦 Archivar listas ({completed})</Text>
+                </Pressable>
+                <Pressable
                   testID="simulate-error-button"
                   accessibilityRole="button"
                   accessibilityLabel="Simular error de API"
                   onPress={() => void loadTasks(true)}
                   style={styles.simulateButton}
                 >
-                  <Text style={styles.simulateLabel}>⚠ Simular error API</Text>
+                  <Text style={styles.simulateLabel}>⚠ Error API</Text>
                 </Pressable>
               </View>
 
@@ -452,11 +545,14 @@ const styles = StyleSheet.create({
   clearButton: { position: 'absolute', right: 6, width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
   clearText: { color: colors.textMuted, fontSize: 15, fontWeight: '800' },
 
-  actions: { flexDirection: 'row', gap: 8, marginBottom: 14 },
+  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 },
   retryButton: { minHeight: 44, paddingHorizontal: 10, backgroundColor: colors.primarySoft, borderRadius: radius.sm, flex: 1, alignItems: 'center', justifyContent: 'center' },
-  retryLabel: { fontSize: 12, color: colors.primaryDark, fontWeight: '800' },
+  retryLabel: { fontSize: 11.5, color: colors.primaryDark, fontWeight: '800' },
+  archiveBatchButton: { minHeight: 44, paddingHorizontal: 10, backgroundColor: colors.neutralSoft, borderRadius: radius.sm, flex: 1.2, alignItems: 'center', justifyContent: 'center' },
+  archiveBatchLabel: { fontSize: 11.5, color: colors.bodyText, fontWeight: '800' },
+  buttonDisabled: { opacity: 0.45 },
   simulateButton: { minHeight: 44, paddingHorizontal: 10, backgroundColor: colors.dangerSoft, borderRadius: radius.sm, flex: 1, alignItems: 'center', justifyContent: 'center' },
-  simulateLabel: { fontSize: 12, color: colors.danger, fontWeight: '800' },
+  simulateLabel: { fontSize: 11.5, color: colors.danger, fontWeight: '800' },
 
   errorBox: { backgroundColor: colors.dangerSoft, borderRadius: radius.md, padding: 14, marginBottom: 12, borderLeftWidth: 4, borderLeftColor: colors.danger },
   errorTitle: { color: colors.danger, fontWeight: '800', fontSize: 14 },

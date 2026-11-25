@@ -5,14 +5,27 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://api.montenegroariel.com.ar",
+        "EXPO_PUBLIC_USE_MOCK": "false"
       }
     },
     "preview": {
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://api.montenegroariel.com.ar",
+        "EXPO_PUBLIC_USE_MOCK": "false"
       }
     },
-    "production": {}
+    "production": {
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://api.montenegroariel.com.ar",
+        "EXPO_PUBLIC_USE_MOCK": "false"
+      }
+    }
   }
 }
